@@ -1,1124 +1,1340 @@
-# Parallel Multi-Agent AI System
+# 🤖 Multi-Agent Research System
 
-> A production-ready multi-agent architecture that decomposes complex queries into parallel research, writing, and review workflows — delivering structured AI-generated reports in a fraction of the time of sequential pipelines.
+> A production-grade, async-first agentic pipeline that decomposes any research query into subtasks, executes them in parallel, synthesises a structured report, and validates it — all in a single HTTP call.
 
-![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green?logo=fastapi)
-![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)
-![Ollama](https://img.shields.io/badge/LLM-Ollama%20%7C%20Gemini%20%7C%20OpenAI-orange)
-![License](https://img.shields.io/badge/license-MIT-lightgrey)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev)
+[![AsyncIO](https://img.shields.io/badge/AsyncIO-native-4CAF50?style=flat)](https://docs.python.org/3/library/asyncio.html)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
 ## Table of Contents
 
-1. [Overview](#overview)
-2. [Architecture](#architecture)
-3. [Agent Descriptions](#agent-descriptions)
-4. [Parallel Processing Design](#parallel-processing-design)
-5. [System Workflow](#system-workflow)
-6. [Example Pipeline Flow](#example-pipeline-flow)
-7. [Performance & Benefits](#performance--benefits)
-8. [Tech Stack](#tech-stack)
-9. [Project Structure](#project-structure)
-10. [Getting Started](#getting-started)
-11. [Configuration](#configuration)
-12. [API Reference](#api-reference)
-13. [Future Improvements](#future-improvements)
+1. [Project Overview](#1-project-overview)
+2. [Agentic System Architecture](#2-agentic-system-architecture)
+3. [Agent Responsibilities](#3-agent-responsibilities)
+4. [Orchestrator Design](#4-orchestrator-design)
+5. [Parallel Processing Strategy](#5-parallel-processing-strategy)
+6. [Low Latency Optimisations](#6-low-latency-optimisations)
+7. [Execution Timeline System](#7-execution-timeline-system)
+8. [Data Models and State Management](#8-data-models-and-state-management)
+9. [Frontend Interaction](#9-frontend-interaction)
+10. [Design Principles](#10-design-principles)
+11. [Example Execution Flow](#11-example-execution-flow)
+12. [Future Improvements](#12-future-improvements)
+13. [Technical Stack](#13-technical-stack)
+14. [Getting Started](#14-getting-started)
+15. [Conclusion](#15-conclusion)
 
 ---
 
-## Overview
+## 1. Project Overview
 
-The Parallel Multi-Agent AI System is a full-stack application that accepts a natural-language query, automatically decomposes it into subtopics, and processes each subtopic through a coordinated pipeline of specialised AI agents. The system is designed around **parallelism** as a first-class concern — research and writing tasks for independent topics are executed concurrently, not sequentially.
+### The Problem
 
-**What it does:**
+Complex research questions cannot be answered well by a single LLM call. A monolithic prompt approach suffers from:
 
-- Accepts any open-ended query (e.g. *"Compare microservices vs monoliths"*)
-- Automatically identifies 3 focused research subtopics
-- Researches all subtopics simultaneously using parallel agents
-- Synthesises findings into a structured Markdown report
-- Enforces quality through an automated review gate
-- Streams live status updates to the UI as each stage completes
+- **Shallow coverage** — the model cannot go deep on every sub-dimension of a topic within one context window.
+- **No quality control** — there is no feedback loop to catch errors, gaps, or contradictions.
+- **Zero observability** — you cannot tell _which part_ of the reasoning was slow or wrong.
+- **Poor scalability** — sequential calls stack latency linearly.
 
-**Who it is for:**
+### The Solution
 
-Developers, researchers, and teams who need to automate structured knowledge synthesis at scale, or who want a reference architecture for building reliable multi-agent LLM systems.
-
----
-
-## Architecture
+This project implements a **multi-agent research pipeline** where four specialised AI agents collaborate in a structured workflow:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                          React Frontend                         │
-│            (Vite · Tailwind CSS · real-time polling)            │
-└────────────────────────────┬────────────────────────────────────┘
-                             │  HTTP via Vite proxy (no CORS)
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     FastAPI Backend :8001                        │
-│                                                                 │
-│   POST /run ──► Orchestrator ──► Task Store (in-memory)         │
-│   GET  /task/{id}              ◄── polling                      │
-│   GET  /health                                                  │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                    ┌────────▼────────┐
-                    │   Orchestrator  │  Coordinates all agents
-                    │     Agent       │  Manages status lifecycle
-                    └────────┬────────┘
-                             │
-           ┌─────────────────┼─────────────────┐
-           ▼                 ▼                 ▼
-    ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-    │  Planner    │  │  Researcher │  │   Writer    │
-    │   Agent     │  │  Agent ×N   │  │   Agent     │
-    └─────────────┘  └─────────────┘  └─────────────┘
-           │         (parallel)              │
-           │                                 ▼
-           │                        ┌─────────────────┐
-           └───────────────────────►│  Reviewer Agent │
-                                    └─────────────────┘
-                                             │
-                                    ┌────────▼────────┐
-                                    │  LLM Client     │
-                                    │  (Ollama/Gemini/ │
-                                    │   OpenAI)        │
-                                    └─────────────────┘
+User Query → [Planner] → [Researcher × N] → [Writer] → [Reviewer] → Final Report
+                          (parallel)
 ```
 
-The backend is fully asynchronous (`asyncio`). Every agent communicates through a shared `generate(prompt, max_tokens)` interface, making the LLM provider completely swappable via a single environment variable.
+Each agent has a **single, well-defined responsibility**. The **Orchestrator** coordinates their execution, tracks state, measures performance, and surfaces the entire pipeline in a live React dashboard. The result is a validated, structured Markdown report generated from parallel, concurrent research — not a single monolithic prompt.
+
+### What Makes This System Different
+
+| Approach | Latency | Quality Control | Observability | Concurrency |
+|---|---|---|---|---|
+| Single LLM call | Moderate | None | None | None |
+| Sequential agents | High | Partial | Partial | None |
+| **This system** | **Low** | **Full review loop** | **Full timeline** | **Parallel research** |
 
 ---
 
-## Agent Descriptions
+## 2. Agentic System Architecture
 
-### 1. Planner Agent
+### High-Level Architecture Diagram
 
-The entry point of every pipeline run. It receives the raw user query and produces a structured list of focused subtopics to research.
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         USER INTERFACE (React / Vite)                   │
+│  ┌──────────────┐  POST /run  ┌────────────────────────────────────┐   │
+│  │  TaskInput   │ ──────────► │         FastAPI Backend             │   │
+│  └──────────────┘             │                                    │   │
+│  ┌──────────────┐  GET /task  │  ┌──────────────────────────────┐  │   │
+│  │ useTaskPoll  │ ◄────────── │  │        Orchestrator           │  │   │
+│  └──────────────┘             │  │                              │  │   │
+│  ┌──────────────┐             │  │  ┌──────────┐                │  │   │
+│  │  Pipeline    │             │  │  │  Planner │                │  │   │
+│  │  Visualizer  │             │  │  └────┬─────┘                │  │   │
+│  └──────────────┘             │  │       │ subtasks[]           │  │   │
+│  ┌──────────────┐             │  │  ┌────▼──────────────────┐   │  │   │
+│  │   Timeline   │             │  │  │  asyncio.gather()      │   │  │   │
+│  └──────────────┘             │  │  │  Researcher Researcher  │   │  │   │
+│  ┌──────────────┐             │  │  │  Researcher            │   │  │   │
+│  │ ReportViewer │             │  │  └────────────┬───────────┘   │  │   │
+│  └──────────────┘             │  │               │ research[]    │  │   │
+│  ┌──────────────┐             │  │  ┌────────────▼──────┐        │  │   │
+│  │ MetricsCard  │             │  │  │      Writer        │        │  │   │
+│  └──────────────┘             │  │  └────────────┬───────┘        │  │   │
+└─────────────────────────────────  │               │ draft          │  │   │
+                               │  │  ┌────────────▼──────┐        │  │   │
+                               │  │  │     Reviewer       │        │  │   │
+                               │  │  │  (loop ≤ 3 times)  │        │  │   │
+                               │  │  └────────────┬───────┘        │  │   │
+                               │  │               │ approved        │  │   │
+                               │  │  ┌────────────▼──────┐        │  │   │
+                               │  │  │  Task Store (RAM)  │        │  │   │
+                               │  │  └───────────────────┘        │  │   │
+                               │  └──────────────────────────────┘  │   │
+                               └─────────────────────────────────────┘   │
+                                                                         │
+                               ┌──────────────────────────────────────┐  │
+                               │         LLM Client (llm_client.py)    │  │
+                               │  Gemini │ OpenAI │ Ollama (local)      │  │
+                               │  Shared httpx.AsyncClient              │  │
+                               │  Exponential backoff (3s → 6s → 12s)  │  │
+                               └──────────────────────────────────────┘  │
+```
 
-**Responsibilities:**
-- Parses the user's query using an LLM call
-- Returns a JSON array of exactly **3 concise subtopic strings**
-- Acts as the decomposition layer — turns one broad question into actionable research tasks
+### Information Flow
 
-**Design:**
-- Uses a tightly constrained prompt to force a valid JSON array response
-- Hard-capped at 3 subtasks (`subtasks[:3]`) to ensure consistent concurrency
-- `max_tokens=150` — a JSON array of 3 short strings needs very few tokens
+1. **User** submits a query via the React frontend → `POST /run`
+2. **API layer** creates a `Task` object, persists it in the in-memory store, and fires `asyncio.create_task()` — returning immediately (non-blocking)
+3. **Orchestrator** takes ownership of the task and drives all agents in sequence
+4. **Frontend** polls `GET /task/{id}` every 1.5 seconds, updating the UI as the `status` field transitions
+5. On completion, the final `result` (a Markdown report) and `metrics` object are returned in the same polling response
+
+---
+
+## 3. Agent Responsibilities
+
+All agents share a common abstract base class, enforcing a clean `name` / `run()` contract.
+
+```python
+# backend/agents/base_agent.py
+class Agent(ABC):
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+    @abstractmethod
+    async def run(self, input_data): ...
+```
+
+This ABC guarantees that every agent is:
+- **Async** — non-blocking, compatible with `asyncio.gather()`
+- **Identified** — the `name` property is used for step logging and timeline labelling
+- **Replaceable** — swapping implementations requires only changing the class, not the orchestrator
+
+---
+
+### 3.1 Planner Agent
+
+**File:** `backend/agents/planner_agent.py`
+
+The Planner is the entry point for every pipeline run. Its job is **task decomposition**: transforming a broad user query into exactly 3 focused research subtopics.
+
+#### How It Works
+
+```
+Input:  "Compare microservices vs monoliths"
+
+Prompt: Task: Compare microservices vs monoliths
+        Return ONLY a JSON array of exactly 3 short research subtopic strings.
+        No explanation. No markdown.
+        Example: ["subtopic 1", "subtopic 2", "subtopic 3"]
+
+Output: ["definition of microservices",
+         "definition of monoliths",
+         "advantages vs disadvantages"]
+```
+
+#### Key Engineering Decisions
+
+| Decision | Rationale |
+|---|---|
+| **`max_tokens=100`** | The output is a tiny JSON array — capping tokens prevents bloat and speeds up the call dramatically |
+| **JSON array extraction via `find("[")` / `rfind("]")`** | LLMs sometimes wrap output in markdown fences; slicing to the first `[` and last `]` is a robust parse-anywhere strategy |
+| **Hard cap at 3 subtopics** (`subtasks[:3]`) | Keeps the research fan-out bounded and predictable regardless of what the LLM returns |
+| **Fallback subtasks** | If LLM fails entirely, hardcoded fallback subtopics keep the pipeline running — the system never crashes on a planner failure |
+
+#### Fallback Mode (`USE_LLM=false`)
+
+Returns hardcoded subtopics for local testing without any API key:
+
+```python
+_FALLBACK_SUBTASKS = [
+    "definition of microservices",
+    "definition of monoliths",
+    "advantages vs disadvantages",
+]
+```
+
+---
+
+### 3.2 Researcher Agent
+
+**File:** `backend/agents/researcher_agent.py`
+
+The Researcher is the most concurrent part of the pipeline. One researcher instance runs **per subtopic**, all fired simultaneously via `asyncio.gather()`. Each collects exactly 3 verified facts about its assigned subtopic.
+
+#### How It Works
+
+```
+Input:  "definition of microservices"
+
+Prompt: Return a JSON object for this topic: "definition of microservices"
+        Required format (no markdown, no extra text):
+        {"topic": "<topic>", "facts": ["fact1", "fact2", "fact3"]}
+        Rules:
+        - Exactly 3 facts
+        - Each fact: one concise sentence, verified and certain
+        - No speculation or invented details
+
+Output: {
+          "topic": "definition of microservices",
+          "facts": [
+            "Microservices is an architectural style...",
+            "Each service runs in its own process...",
+            "Services communicate via lightweight APIs..."
+          ]
+        }
+```
+
+#### Concurrency Limiting with Semaphore
+
+```python
+_semaphore = asyncio.Semaphore(3)
+
+async def run(self, subtask: str) -> AgentResult:
+    async with _semaphore:
+        ...
+```
+
+A **global asyncio Semaphore** caps concurrent LLM calls at 3. This is critical for:
+- **Free-tier API rate limits** — prevent 429 errors by controlling throughput
+- **Local Ollama servers** — avoid overwhelming VRAM with concurrent inference
+- **Predictable performance** — concurrency remains stable regardless of how many subtopics are generated
+
+#### Key Engineering Decisions
+
+| Decision | Rationale |
+|---|---|
+| **Structured JSON output** | Facts are machine-readable for the writer — no regex parsing of prose needed |
+| **`max_tokens=250`** | Enough for 3 sentences; prevents the LLM from rambling |
+| **`_parse_research()` key normalisation** | Handles LLM variants (`"key_points"` vs `"facts"`) gracefully |
+| **Per-agent fallback** | A single researcher failure does not abort the whole pipeline |
+
+---
+
+### 3.3 Writer Agent
+
+**File:** `backend/agents/writer_agent.py`
+
+The Writer receives the structured research output from all Researcher agents and synthesises it into a coherent, structured Markdown report.
+
+#### How It Works
+
+The `_format_research()` helper converts structured research dicts into a prompt-ready text block:
+
+```python
+def _format_research(research_outputs: list) -> str:
+    for item in research_outputs:
+        topic = item.get("topic", "")
+        facts = item.get("facts", [])
+        bullet_facts = "\n".join(f"- {f}" for f in facts)
+        sections.append(f"### {topic}\n{bullet_facts}")
+    return "\n\n".join(sections)
+```
+
+This produces a clean, structured text like:
+
+```
+### definition of microservices
+- Microservices is an architectural style...
+- Each service runs in its own process...
+
+### advantages vs disadvantages
+- Microservices offer independent deployability...
+```
+
+Which is then injected into a tight writer prompt:
+
+```
+Request: Compare microservices vs monoliths
+
+Research:
+### definition of microservices
+- ...
+
+Write a Markdown report using ONLY the facts above.
+Format: one-sentence intro, ## heading per topic, bullet facts, one-sentence conclusion.
+Max 150 words. No extra commentary.
+```
+
+#### Key Engineering Decisions
+
+| Decision | Rationale |
+|---|---|
+| **"ONLY the facts above"** directive | Prevents hallucination by grounding the writer strictly to researcher-provided data |
+| **Explicit Markdown format instructions** | Eliminates unpredictable output structure; the report is immediately renderable |
+| **150 word cap** | Keeps reports concise; avoids token bloat that inflates cost and latency |
+| **`max_tokens=500`** | Writer gets more budget than planner/reviewer due to content generation demands |
+| **Handles both dict and string research inputs** | Makes the agent resilient if a researcher returns a raw string fallback |
+
+---
+
+### 3.4 Reviewer Agent
+
+**File:** `backend/agents/reviewer_agent.py`
+
+The Reviewer is the quality-control gate. It reads the draft report and outputs one of two structured verdicts:
+
+```
+APPROVED
+  or
+REVISION_NEEDED: <issue1>; <issue2>
+```
+
+#### How It Works
 
 ```python
 prompt = (
-    "Break the following task into exactly 3 research subtasks. "
-    "Return ONLY a JSON array of 3 short strings, no explanation.\n"
-    f"Task: {input_data}"
+    "Review this report. Default to APPROVED.\n"
+    "Only flag a revision if there is a clear factual contradiction "
+    "or an obviously missing required section.\n\n"
+    "Return EXACTLY one of:\n"
+    "  APPROVED\n"
+    "  REVISION_NEEDED: <issue1>; <issue2>\n\n"
+    "No other text.\n\n"
+    f"Report:\n{draft}"
 )
-response = await generate(prompt, max_tokens=150)
+response = (await generate(prompt, max_tokens=80)).strip()
 ```
+
+#### State Machine Logic
+
+```
+Reviewer Response
+      │
+      ├── starts with "APPROVED"       → AgentResult(status="approved")
+      │                                   Orchestrator exits review loop
+      │
+      ├── starts with "REVISION_NEEDED" → AgentResult(status="revision_needed")
+      │                                    Orchestrator calls Writer again
+      │                                    (capped at MAX_REVISIONS = 3)
+      │
+      └── ambiguous / error            → AgentResult(status="approved")
+                                         Fail-open to prevent infinite loops
+```
+
+#### Key Engineering Decisions
+
+| Decision | Rationale |
+|---|---|
+| **"Default to APPROVED"** instruction | The reviewer is conservative by design — only flags clear issues, not stylistic ones |
+| **`max_tokens=80`** | The verdict is one line; 80 tokens is more than enough and costs almost nothing |
+| **Max 3 revisions** (`MAX_REVISIONS = 3`) | Prevents unbounded loops; the system converges to a final report within a known step budget |
+| **Fail-open on ambiguity** | Ambiguous LLM responses default to `approved` — the last draft is always used rather than crashing |
+| **Feedback stored in `Step.metadata`** | Revision issues are captured in the timeline for full observability |
 
 ---
 
-### 2. Research Agent
+## 4. Orchestrator Design
 
-One Research Agent instance is spawned per subtopic. All instances execute **concurrently**, making the total research time equal to the time of a single research call rather than N times that.
+**File:** `backend/orchestrator/orchestrator.py`
 
-**Responsibilities:**
-- Accepts one subtopic string
-- Queries the LLM for key facts about that subtopic
-- Returns concise, factual bullet points for use by the Writer
+The Orchestrator is the **brain of the system**. It owns the entire pipeline lifecycle: instantiating agents, coordinating execution including timing every step, managing state transitions, and persisting the task at each phase boundary.
 
-**Design:**
-- Controlled by `asyncio.Semaphore(3)` — allows all 3 agents to run simultaneously while bounding Ollama connection load
-- `max_tokens=400` — enough for 3 focused bullet points without over-generating
-- Subtopic label is stored alongside the output in the `Step` model for timeline display
+### Class Design
 
 ```python
-research_semaphore = asyncio.Semaphore(3)
+class Orchestrator:
+    def __init__(self):
+        self.planner    = PlannerAgent()
+        self.researcher = ResearcherAgent()
+        self.writer     = WriterAgent()
+        self.reviewer   = ReviewerAgent()
 
-async with research_semaphore:
-    prompt = (
-        f"Topic: {subtask}\n\n"
-        "Give 3 concise bullet points of key facts. Be brief."
-    )
-    result = await generate(prompt, max_tokens=400)
+    def create_task(self, query: str) -> Task:
+        task = Task(id=str(uuid.uuid4()), query=query, status="planning", ...)
+        save_task(task)
+        return task
+
+    async def run(self, task_id: str) -> Task:
+        ...
 ```
+
+Agents are **instantiated once** at startup and reused across all requests. This avoids repeated object construction overhead.
+
+### Task Status State Machine
+
+```
+                  ┌──────────────────────────────────┐
+                  ▼                                  │
+            [planning]                               │
+                  │ Planner completes                │
+                  ▼                                  │
+           [researching]                             │
+                  │ All researchers complete          │
+                  ▼                                  │
+             [writing]  ◄─────────────────┐          │
+                  │                       │ revision  │
+                  ▼                       │ needed    │
+            [reviewing] ──────────────────┘          │
+                  │ approved (or max revisions hit)   │
+                  ▼                                  │
+           [completed] ─────────────────────────────┘
+```
+
+Every transition calls `save_task(task)` immediately, so the frontend polling loop always sees an up-to-date status.
+
+### Timing Every Step with `_timed()`
+
+```python
+async def _timed(coro):
+    t0 = datetime.now()
+    result = await coro
+    return result, t0, (datetime.now() - t0).total_seconds() * 1000
+```
+
+This utility wraps any coroutine and captures:
+- **`result`** — the actual agent output
+- **`t0`** — the wall-clock start time (stored in the `Step`)
+- **`elapsed_ms`** — precise duration in milliseconds
+
+Every agent call is wrapped in `_timed()`, making performance measurement automatic and zero-intrusion.
+
+### Metrics Accounting
+
+```python
+metrics_before = get_metrics()
+# ... pipeline runs ...
+metrics_after = get_metrics()
+
+task.metrics = {
+    "llm_calls": metrics_after["llm_calls"] - metrics_before["llm_calls"],
+    "retries":   metrics_after["retries"]   - metrics_before["retries"],
+    "duration_ms": round(task.total_duration_ms, 2),
+}
+```
+
+By snapshotting the global counters **before** and **after** the pipeline, metrics are scoped precisely per-task — even under concurrent requests.
+
+### Why the Orchestrator is Critical
+
+In agentic systems, agent logic and coordination logic must be **strictly separated**. Without a dedicated orchestrator:
+- Agents would need to know about each other (tight coupling)
+- State transitions would be scattered across agent implementations
+- Adding new agents would require modifyin existing ones
+- Observability would require invasive code changes
+
+The Orchestrator is the **single source of truth** for pipeline control flow. Agents remain dumb, focused, and composable.
 
 ---
 
-### 3. Writer Agent
+## 5. Parallel Processing Strategy
 
-Receives all research outputs together and synthesises them into a single, coherent Markdown report. Uses **dynamic prompting** — the full research context is injected as part of the prompt, so the Writer can draw relationships across subtopics.
+### The Core Insight
 
-**Responsibilities:**
-- Combines research notes from all N Research Agents
-- Produces a structured Markdown report with `##` headings per topic
-- Includes an introduction and a brief conclusion
-- Output is passed directly to the Reviewer
+The three research subtopics are **fully independent** — researching "definition of microservices" does not require the results from "advantages vs disadvantages". This is the key insight that makes parallel execution safe and beneficial.
 
-**Design:**
-- Dynamic prompt construction: research notes are joined and embedded at call time
-- `max_tokens=900` — sufficient for a complete multi-section report
-- Prompt is concise by design to avoid directing the model toward verbose over-generation
+### Implementation
 
 ```python
-notes = "\n\n".join(research_outputs)
-prompt = (
-    f"User Request: {user_query}\n\n"
-    f"Research Notes:\n{notes}\n\n"
-    "Write a clear Markdown report answering the request. "
-    "Use ## headings for each topic, a short intro, and a brief conclusion. "
-    "Be informative but concise."
+# backend/orchestrator/orchestrator.py
+
+timed_results = await asyncio.gather(
+    *[_timed(self.researcher.run(s)) for s in subtasks]
 )
-report = await generate(prompt, max_tokens=900)
 ```
 
----
-
-### 4. Reviewer Agent
-
-The final quality gate. Reviews the Writer's draft and either approves it or returns specific, actionable feedback. If a revision is requested, the Writer re-runs with the feedback appended.
-
-**Responsibilities:**
-- Checks for factual inconsistencies and contradictory information
-- Identifies logical errors and missing sections
-- Evaluates structural clarity
-- Returns a binary verdict: `APPROVED` or `REVISION: <specific feedback>`
-
-**Design:**
-- Forces a strict output format — the LLM cannot return anything other than the two expected patterns
-- `max_tokens=150` — a one-line verdict is all that is required
-- Ambiguous responses default to `APPROVED` to prevent infinite loops
-
-```python
-# Possible outputs:
-"APPROVED"
-"REVISION: The scalability section contradicts the intro on line 3."
-```
-
----
-
-### 5. Orchestrator Agent
-
-The central coordinator. It owns the task lifecycle, wires all agents together, manages the status state machine, and records a detailed `Step` timeline for every action taken.
-
-**Responsibilities:**
-- Creates a `Task` object and persists it for polling
-- Calls Planner → `asyncio.gather(Researchers)` → Writer → Reviewer in sequence
-- Updates `task.status` at each stage transition (`planning → researching → writing → reviewing → done`)
-- Records every step with agent name, subtask label, output, timestamp, and duration
-- Attaches execution metrics at completion (`llm_calls`, `retries`, `duration_ms`)
+`asyncio.gather()` fires all researcher coroutines simultaneously and waits for all of them to complete. With 3 subtopics this turns:
 
 ```
-Status machine:
-  planning → researching → writing → reviewing → done
-                                         ↑           |
-                                         └───────────┘
-                                    (revision loop)
+Sequential:  [Researcher 1] → [Researcher 2] → [Researcher 3]
+             ←───── 3 × T_research ─────────────────────────►
+
+Parallel:    [Researcher 1] ─────────────────────────────────►
+             [Researcher 2] ─────────────────────────────────►  ← all at T_research
+             [Researcher 3] ─────────────────────────────────►
 ```
 
----
+**Latency reduction:** ~66% for the research phase (from 3 × latency to 1 × latency).
 
-## Parallel Processing Design
-
-The system is built around `asyncio` cooperative concurrency. The critical design insight is **where** parallelism is applied:
+### Concurrency Architecture Diagram
 
 ```
-Sequential (naive) approach:
-  Research A → Research B → Research C → Write → Review
-  Total: T_A + T_B + T_C + T_W + T_R
-
-Parallel (this system):
-  Research A ─┐
-  Research B ─┼─► (all complete together) → Write → Review
-  Research C ─┘
-  Total: max(T_A, T_B, T_C) + T_W + T_R
-```
-
-For 3 research calls averaging 20 seconds each, the sequential approach takes ~60 seconds in the research phase alone. The parallel approach takes ~20 seconds — a **3× speedup** on the most expensive phase.
-
-**Key mechanisms:**
-
-| Mechanism | Purpose |
-|---|---|
-| `asyncio.gather(*[researcher.run(s) for s in subtasks])` | Fires all Research Agents simultaneously |
-| `asyncio.Semaphore(3)` | Caps concurrent Ollama connections to match the number of subtasks |
-| Per-agent `max_tokens` budgets | Prevents any single call from generating more tokens than its task requires |
-| Non-blocking `httpx.AsyncClient` | All HTTP calls to Ollama are I/O-non-blocking — the event loop is never stalled |
-
----
-
-## System Workflow
-
-```
-1. User submits query via the React UI
-         │
-         ▼
-2. POST /run → backend creates Task (status: "planning")
-         │
-         ▼
-3. Planner Agent → returns ["subtask_1", "subtask_2", "subtask_3"]
-         │
-         ▼
-4. status → "researching"
-   asyncio.gather launches 3 Research Agents in parallel
-   Each agent researches its subtopic independently
-         │
-         ▼
-5. status → "writing"
-   Writer Agent receives all 3 research outputs
-   Synthesises into a unified Markdown report
-         │
-         ▼
-6. status → "reviewing"
-   Reviewer Agent checks the draft
-   ┌─ APPROVED → status = "done", result saved
-   └─ REVISION → feedback sent back to Writer → repeat from step 5
-         │
-         ▼
-7. Frontend polling (GET /task/{id}) detects status = "done"
-   Report rendered in ReportViewer with word count and download option
-   Metrics card shows: LLM Calls / Retries / Total Duration
-```
-
----
-
-## Example Pipeline Flow
-
-**Input query:** `"What are the trade-offs between SQL and NoSQL databases?"`
-
-```
-[Planner]
-  Subtasks: [
-    "SQL database architecture and ACID properties",
-    "NoSQL database types and use cases",
-    "Performance and scalability comparison"
-  ]
-
-[Researcher × 3]  ← all running simultaneously
-  Agent 1 → "• SQL uses structured schemas... • ACID guarantees..."
-  Agent 2 → "• Document, key-value, graph stores... • Eventual consistency..."
-  Agent 3 → "• SQL scales vertically... • NoSQL horizontal sharding..."
-
-[Writer]
-  ## SQL Architecture and ACID Properties
-  SQL databases organise data into tables with enforced schemas...
-
-  ## NoSQL Types and Use Cases
-  NoSQL encompasses document stores (MongoDB), key-value stores (Redis)...
-
-  ## Performance and Scalability
-  SQL databases traditionally scale vertically...
-
-  ## Conclusion
-  The right choice depends on consistency requirements...
-
-[Reviewer]
-  → APPROVED
-
-[Result]
-  Full Markdown report delivered to the UI in ~75 seconds.
-  Metrics: { llm_calls: 5, retries: 0, duration_ms: 74300 }
-```
-
----
-
-## Performance & Benefits
-
-### Latency Reduction Through Parallelism
-
-| Phase | Sequential Approach | This System | Improvement |
-|---|---|---|---|
-| Planning | ~8 s | ~8 s | — |
-| Research (3 subtasks) | ~60 s | ~20 s | **3× faster** |
-| Writing | ~30 s | ~30 s | — |
-| Reviewing | ~8 s | ~8 s | — |
-| **Total** | **~106 s** | **~66 s** | **~38% faster** |
-
-*Timings based on `gemma3:4b` running on CPU. GPU inference will be significantly faster.*
-
-### Token Budget Optimisation
-
-Enforcing `max_tokens` per agent prevents the single largest source of latency in local LLM inference — unbounded generation:
-
-| Agent | max_tokens | Reason |
-|---|---|---|
-| Planner | 150 | JSON array of 3 short strings |
-| Researcher | 400 | 3 bullet points per subtopic |
-| Writer | 900 | Full Markdown report, concise |
-| Reviewer | 150 | One-line verdict only |
-
-### Scalability
-
-- **Horizontal topic scaling:** Adding more subtopics only increases the semaphore value and the `asyncio.gather` call — no architectural changes needed
-- **Provider-agnostic:** Swap between Ollama, Gemini, and OpenAI by changing one environment variable; all agents use the same `generate()` interface
-- **Stateless agents:** Each agent is a pure async function with no shared mutable state — safe to scale and test independently
-
-### Modularity
-
-- Each agent is an independent class with a single `async run()` method
-- The LLM client is fully decoupled from agents — swapping providers requires zero agent code changes
-- The Task/Step data model is provider-agnostic and can be persisted to any database
-
-### Reliability
-
-- Built-in retry with exponential back-off (3 s → 6 s → 12 s) on every LLM call
-- HTTP 429 rate-limit detection with logged warnings
-- Reviewer fallback: ambiguous responses default to `APPROVED` to prevent infinite revision loops
-
----
-
-## Tech Stack
-
-### Backend
-
-| Technology | Role |
-|---|---|
-| **Python 3.11+** | Runtime |
-| **FastAPI** | REST API framework |
-| **Uvicorn** | ASGI server |
-| **asyncio** | Concurrent agent execution |
-| **httpx** | Async HTTP client for LLM API calls |
-| **Pydantic v2** | Data validation and serialisation |
-| **python-dotenv** | Environment variable management |
-
-### Frontend
-
-| Technology | Role |
-|---|---|
-| **React 18** | UI framework |
-| **Vite** | Dev server and build tool (with proxy) |
-| **Tailwind CSS** | Utility-first styling |
-| **@tailwindcss/typography** | Markdown report prose styling |
-| **react-markdown** | Render LLM Markdown output |
-| **Axios** | HTTP client with Vite proxy routing |
-
-### LLM Providers (pluggable)
-
-| Provider | Model | Notes |
-|---|---|---|
-| **Ollama** (default) | `gemma3:4b` | Local, private, no API key required |
-| **Google Gemini** | `gemini-2.5-flash` | Cloud, fast, requires API key |
-| **OpenAI** | `gpt-4o-mini` | Cloud, requires API key |
-
----
-
-## Project Structure
-
-```
-multi-agent-system/
-├── README.md
-├── backend/
-│   ├── .env                        # Secrets and provider config (not committed)
-│   ├── main.py                     # FastAPI app entry point, CORS, .env loader
-│   ├── config.py                   # USE_LLM flag
-│   ├── requirements.txt
-│   │
-│   ├── agents/
-│   │   ├── base_agent.py           # Abstract Agent base class
-│   │   ├── planner_agent.py        # Subtask decomposition, max_tokens=150
-│   │   ├── researcher_agent.py     # Parallel research, Semaphore(3), max_tokens=400
-│   │   ├── writer_agent.py         # Report synthesis, max_tokens=900
-│   │   └── reviewer_agent.py       # Quality gate, max_tokens=150
-│   │
-│   ├── orchestrator/
-│   │   └── orchestrator.py         # Pipeline wiring, status machine, metrics
-│   │
-│   ├── llm/
-│   │   └── llm_client.py           # generate(prompt, max_tokens), retry, metrics
-│   │
-│   ├── models/
-│   │   ├── task.py                 # Task + Step models (subtask, duration_ms)
-│   │   └── agent_result.py         # AgentResult model
-│   │
-│   ├── api/
-│   │   └── routes.py               # POST /run, GET /task/{id}, GET /health
-│   │
-│   └── storage/
-│       └── task_store.py           # In-memory task store
+asyncio event loop
 │
-└── frontend/
-    ├── package.json
-    ├── vite.config.js              # Proxy: /run, /task, /health → :8001
-    ├── tailwind.config.js
-    └── src/
-        ├── App.jsx
-        ├── index.css               # Keyframe animations, shimmer, scrollbar
-        ├── pages/
-        │   └── Dashboard.jsx       # Hero landing + active task layout
-        ├── components/
-        │   ├── TaskInput.jsx       # Glass-style query input
-        │   ├── PipelineVisualizer.jsx  # Live stage tracker with agent colours
-        │   ├── Timeline.jsx        # Step cards with subtask labels
-        │   ├── ReportViewer.jsx    # Markdown render, word count, download
-        │   ├── MetricsCard.jsx     # LLM Calls / Retries / Duration
-        │   └── StatusBadge.jsx     # Status pill component
-        ├── hooks/
-        │   └── useTaskPolling.js   # Polls GET /task/{id} every second
-        └── services/
-            └── api.js              # Axios with baseURL: '' (Vite proxy)
+├── Task: POST /run handler
+│     └── asyncio.create_task(orchestrator.run(task_id))  ← non-blocking!
+│
+├── Task: orchestrator.run()
+│     ├── await planner.run()                   ← sequential (dependency)
+│     ├── await asyncio.gather(                 ← PARALLEL
+│     │     researcher.run("subtopic_1"),
+│     │     researcher.run("subtopic_2"),
+│     │     researcher.run("subtopic_3"),
+│     │   )
+│     ├── await writer.run()                    ← sequential (needs research)
+│     └── await reviewer.run()                  ← sequential (needs draft)
+│
+└── Task: GET /task/{id} (polling)              ← concurrent with above
 ```
 
----
+### Semaphore-Controlled Throughput
 
-## Getting Started
+```python
+_semaphore = asyncio.Semaphore(3)
 
-### Prerequisites
-
-- Python 3.11 or higher
-- Node.js 18 or higher
-- [Ollama](https://ollama.com) installed (for local inference)
-
-### 1. Pull the LLM model
-
-```bash
-ollama pull gemma3:4b
+async def run(self, subtask: str) -> AgentResult:
+    async with _semaphore:
+        ...
 ```
 
-### 2. Set up the Python environment
-
-```bash
-cd multi-agent-system/backend
-python -m venv ../../venv
-# Windows:
-../../venv/Scripts/activate
-# macOS/Linux:
-source ../../venv/bin/activate
-
-pip install -r requirements.txt
-```
-
-### 3. Configure environment variables
-
-```bash
-# Copy the example and fill in your values
-cp .env.example .env
-```
-
-See [Configuration](#configuration) for all available variables.
-
-### 4. Start the backend
-
-```powershell
-# Windows PowerShell
-$env:PYTHONPATH = (Get-Location).Path
-& "..\..\venv\Scripts\uvicorn.exe" main:app --port 8001 --reload
-```
-
-```bash
-# macOS / Linux
-PYTHONPATH=. uvicorn main:app --port 8001 --reload
-```
-
-### 5. Start the frontend
-
-```bash
-cd multi-agent-system/frontend
-npm install
-npm run dev
-```
-
-Open **http://localhost:3000** — the Vite dev server proxies all API requests to the backend automatically.
-
-### 6. Verify
-
-```bash
-curl http://localhost:8001/health
-# → {"status": "ok"}
-```
-
----
-
-## Configuration
-
-All configuration lives in `backend/.env`:
-
-```env
-# ── LLM Provider ──────────────────────────────────────
-LLM_PROVIDER=ollama          # ollama | gemini | openai
-USE_LLM=true                 # false = use static fallback data (no LLM needed)
-
-# ── Ollama (local, recommended) ───────────────────────
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=gemma3:4b       # 3.3 GB — good balance of speed and quality
-                             # alternatives: llama3:8b, deepseek-r1:8b
-
-# ── Google Gemini (cloud) ─────────────────────────────
-GEMINI_API_KEY=your_key_here
-
-# ── OpenAI (cloud) ────────────────────────────────────
-OPENAI_API_KEY=your_key_here
-```
-
-**Switching providers:** Change `LLM_PROVIDER` and restart — no code changes required.
-
-**Recommended models by use case:**
-
-| Use Case | Provider | Model |
-|---|---|---|
-| Local / private | Ollama | `gemma3:4b` |
-| Fast cloud | Gemini | `gemini-2.5-flash` |
-| High-quality cloud | OpenAI | `gpt-4o-mini` |
-
----
-
-## API Reference
-
-### `POST /run`
-
-Submit a new query and start the pipeline.
-
-**Request:**
-```json
-{ "query": "Compare SQL vs NoSQL databases" }
-```
-
-**Response:**
-```json
-{
-  "id": "3f8a1c2d-...",
-  "status": "planning",
-  "query": "Compare SQL vs NoSQL databases",
-  "steps": [],
-  "result": null,
-  "metrics": null
-}
-```
-
----
-
-### `GET /task/{id}`
-
-Poll for the current state of a running or completed task.
-
-**Response (completed):**
-```json
-{
-  "id": "3f8a1c2d-...",
-  "status": "done",
-  "query": "Compare SQL vs NoSQL databases",
-  "steps": [
-    {
-      "agent": "planner",
-      "subtask": null,
-      "output": ["SQL architecture", "NoSQL types", "Scalability comparison"],
-      "timestamp": "2026-03-05T10:00:00",
-      "duration_ms": 6200
-    },
-    {
-      "agent": "researcher",
-      "subtask": "SQL architecture",
-      "output": "• SQL uses structured schemas...",
-      "timestamp": "2026-03-05T10:00:06",
-      "duration_ms": 18400
-    }
-  ],
-  "result": "## SQL Architecture\n\n...",
-  "total_duration_ms": 74300,
-  "metrics": {
-    "llm_calls": 5,
-    "retries": 0,
-    "duration_ms": 74300
-  }
-}
-```
-
----
-
-### `GET /health`
-
-```json
-{ "status": "ok" }
-```
-
----
-
-## Future Improvements
-
-### Agent Capabilities
-
-- [ ] **Streaming output** — stream Writer tokens to the UI in real time instead of waiting for the full report
-- [ ] **Agent memory** — persist summaries across sessions so repeated queries benefit from prior research
-- [ ] **Tool use** — equip Research Agents with web search, Wikipedia, or ArXiv API tools for grounded factual retrieval
-- [ ] **Dynamic subtask count** — let the Planner decide N based on query complexity instead of a fixed 3
-
-### Performance
-
-- [ ] **Result caching** — cache Research Agent outputs keyed by subtopic so identical subtasks are not re-researched
-- [ ] **Streamed review** — run the Reviewer on streaming Writer output to overlap work
-- [ ] **Model routing** — route simple tasks to faster/cheaper models and complex tasks to larger ones automatically
-
-### Infrastructure
-
-- [ ] **Persistent task store** — replace the in-memory dict with Redis or PostgreSQL for multi-instance deployments
-- [ ] **WebSocket updates** — replace polling with a WebSocket push for lower-latency UI updates
-- [ ] **Docker Compose** — containerise backend, frontend, and Ollama for one-command startup
-- [ ] **Authentication** — add API key or OAuth2 protection for the `/run` endpoint
-
-### Observability
-
-- [ ] **Distributed tracing** — integrate OpenTelemetry spans across all agents
-- [ ] **Structured logging** — emit JSON logs for ingestion into Grafana/Loki
-- [ ] **Cost tracking** — record estimated token cost per task for cloud providers
-
----
-
-## License
-
-MIT — see [LICENSE](LICENSE) for details.
-
-   - [Backend](#backend)
-   - [Frontend](#frontend)
-3. [Agent Pipeline](#agent-pipeline)
-4. [Performance Improvements](#performance-improvements)
-5. [Observability Upgrades](#observability-upgrades)
-6. [Frontend Redesign](#frontend-redesign)
-7. [LLM Provider Configuration](#llm-provider-configuration)
-8. [Running the System](#running-the-system)
-9. [Project Structure](#project-structure)
-10. [Environment Variables](#environment-variables)
-
----
-
-## System Overview
-
-```
-User Query
-    │
-    ▼
-┌─────────────┐     ┌──────────────────────────────────────────┐
-│  React UI   │────▶│  FastAPI Backend (port 8001)             │
-│  Vite 3000  │◀────│  Planner → Researcher → Writer → Reviewer│
-└─────────────┘     └──────────────────────────────────────────┘
-                                        │
-                              ┌─────────▼──────────┐
-                              │  Ollama (local)     │
-                              │  gemma3:4b          │
-                              │  port 11434         │
-                              └─────────────────────┘
-```
-
-The frontend communicates with the backend exclusively through **Vite's dev-server proxy**, which eliminates CORS preflight entirely. All `/run`, `/task/*`, and `/health` requests are forwarded from port 3000 to port 8001 server-side.
-
----
-
-## Architecture
-
-### Backend
-
-```
-backend/
-├── main.py                  # FastAPI app, CORS config, .env loader
-├── config.py                # USE_LLM flag
-├── requirements.txt
-├── agents/
-│   ├── base_agent.py        # Abstract Agent base class
-│   ├── planner_agent.py     # Breaks query → 3 subtasks (JSON array)
-│   ├── researcher_agent.py  # Parallel research per subtask
-│   ├── writer_agent.py      # Synthesises research into Markdown report
-│   └── reviewer_agent.py    # Quality gate: APPROVED or REVISION: <feedback>
-├── orchestrator/
-│   └── orchestrator.py      # Wires all agents, tracks status, emits Steps
-├── llm/
-│   └── llm_client.py        # Single async generate() with retry + metrics
-├── models/
-│   ├── task.py              # Task + Step Pydantic models
-│   └── agent_result.py      # AgentResult model
-├── api/
-│   └── routes.py            # POST /run, GET /task/{id}, GET /health
-└── storage/
-    └── task_store.py        # In-memory task store (dict)
-```
-
-**Key design decisions:**
-
-| Decision | Reason |
+| Without Semaphore | With Semaphore (limit=3) |
 |---|---|
-| Single `generate()` entry-point in `llm_client.py` | All agents share retry logic, metrics, and provider-switching with zero duplication |
-| Async all the way (`asyncio`) | Research subtasks run concurrently without blocking threads |
-| Pydantic models for `Task` and `Step` | Auto-validated JSON serialisation for the polling API |
-| In-memory task store | Simplicity for local use; swap `task_store.py` for Redis/Postgres without touching agents |
+| All N requests hit the API simultaneously | Maximum 3 concurrent API calls |
+| Risk of 429 rate limit errors | Smooth throughput, no rate limit bursts |
+| Unpredictable latency spikes | Predictable and bounded concurrency |
 
-### Frontend
+### Task Dependency Graph
 
 ```
-frontend/src/
-├── App.jsx
-├── main.jsx
-├── index.css                # Keyframe animations, shimmer, custom scrollbar
-├── pages/
-│   └── Dashboard.jsx        # Hero landing mode + active task layout
-├── components/
-│   ├── TaskInput.jsx        # Glass-style dark hero input
-│   ├── PipelineVisualizer.jsx  # Per-agent color themes, pulsing ring on active
-│   ├── Timeline.jsx         # Expandable step cards with subtask labels
-│   ├── ReportViewer.jsx     # Markdown renderer, word count, download button
-│   ├── MetricsCard.jsx      # LLM Calls / Retries / Duration stat cards
-│   └── StatusBadge.jsx      # Dark-mode translucent status pills
-├── hooks/
-│   └── useTaskPolling.js    # Polls GET /task/{id} every second
-└── services/
-    └── api.js               # Axios instance with baseURL: '' (Vite proxy)
+                 ┌──────────────┐
+                 │    Planner   │
+                 └──────┬───────┘
+          ┌─────────────┼─────────────┐
+          ▼             ▼             ▼
+    ┌──────────┐  ┌──────────┐  ┌──────────┐
+    │Research 1│  │Research 2│  │Research 3│   ← PARALLEL
+    └────┬─────┘  └────┬─────┘  └────┬─────┘
+         └─────────────┼─────────────┘
+                       ▼
+                 ┌──────────────┐
+                 │    Writer    │
+                 └──────┬───────┘
+                        ▼
+                 ┌──────────────┐
+                 │   Reviewer   │   ← loop ≤ 3×
+                 └──────────────┘
 ```
 
 ---
 
-## Agent Pipeline
+## 6. Low Latency Optimisations
+
+The system is designed around a core principle: **every millisecond saved at the LLM API boundary is multiplicatively valuable** because agents run in sequence and calls stack.
+
+### 1. Token Budget Engineering
+
+Each agent is given the smallest `max_tokens` value that satisfies its task:
+
+| Agent | `max_tokens` | Rationale |
+|---|---|---|
+| Planner | `100` | A JSON array of 3 short strings fits easily in ~60 tokens |
+| Researcher | `250` | 3 sentences × ~30 words each = ~120 tokens; 250 is safe headroom |
+| Writer | `500` | Prose report up to 150 words; needs formatting overhead |
+| Reviewer | `80` | One-line verdict; even `REVISION_NEEDED: issue1; issue2` is ~20 tokens |
+
+Tight token budgets reduce:
+- **Time to first token** — the model generates less
+- **Network payload** — smaller responses transfer faster
+- **Cost** — output tokens are charged per token
+
+### 2. Structured Output Contracts
+
+Every agent demands structured output in its prompt:
 
 ```
-POST /run  {"query": "..."}
-      │
-      ▼
-  [Planner]  ──────────────────────────────── max_tokens=150
-      │  Returns: ["subtask A", "subtask B", "subtask C"]
-      │
-      ▼
-  [Researcher × 3]  ──────────────────────── max_tokens=400 each
-      │  asyncio.gather() — all 3 run in parallel
-      │  Semaphore(3) caps concurrent Ollama connections
-      │  Each step stored with subtask label in timeline
-      │
-      ▼
-  [Writer]  ──────────────────────────────── max_tokens=900
-      │  Synthesises 3 research outputs into Markdown report
-      │  ## headings per topic, short intro, brief conclusion
-      │
-      ▼
-  [Reviewer]  ─────────────────────────────── max_tokens=150
-      │  Returns APPROVED  ──────────────────────────────┐
-      │  or REVISION: <feedback>                         │
-      │        │                                         │
-      │        └── re-runs Writer with feedback ─────────┘
-      │
-      ▼
-  Task status = "done", result = final Markdown report
+# Planner:
+Return ONLY a JSON array. No explanation. No markdown.
+
+# Researcher:
+Required format (no markdown, no extra text):
+{"topic": "<topic>", "facts": ["fact1", "fact2", "fact3"]}
+
+# Reviewer:
+Return EXACTLY one of:
+  APPROVED
+  REVISION_NEEDED: <issue>
+No other text.
 ```
 
-**Status transitions visible in the UI:**
-`planning` → `researching` → `writing` → `reviewing` → `done`
+Structured outputs eliminate the need for post-processing passes, regex extraction on prose, or secondary LLM calls to reformat data.
+
+### 3. Minimal Reasoning Prompts
+
+Prompts instruct the LLM to skip chain-of-thought:
+- `"No explanation."` (Planner)
+- `"No extra commentary."` (Writer)
+- `"No other text."` (Reviewer)
+
+Chain-of-thought increases token count by 3–10×. Suppressing it for deterministic tasks reduces latency proportionally.
+
+### 4. Shared HTTP Client
+
+```python
+# backend/llm/llm_client.py
+_http = httpx.AsyncClient(timeout=None)
+```
+
+A **single `httpx.AsyncClient` instance** is shared across all LLM calls. This means:
+- TCP connections are reused (keepalive)
+- TLS handshakes happen once per connection
+- No per-request DNS resolution overhead
+
+Without connection reuse, each LLM call would pay an additional ~100–300 ms for TCP + TLS setup.
+
+### 5. Non-Blocking API Design
+
+```python
+# backend/api/routes.py
+@router.post("/run")
+async def run_task(request: QueryRequest):
+    task = orchestrator.create_task(request.query)
+    asyncio.create_task(orchestrator.run(task.id))  # fire-and-forget
+    return task                                       # returns immediately
+```
+
+The HTTP response returns in < 5 ms with the initial `Task` object. The pipeline runs entirely in the background. The frontend polls for updates rather than waiting on a long-lived HTTP connection. This means:
+- No HTTP timeout issues for long-running pipelines
+- The server can handle other requests while a pipeline is running
+- The UI feels immediately responsive
+
+### 6. Exponential Backoff with Bounded Retries
+
+```python
+_MAX_RETRIES = 3
+_RETRY_DELAYS = [3, 6, 12]  # seconds
+
+for attempt in range(_MAX_RETRIES):
+    try:
+        _metrics["llm_calls"] += 1
+        return await _generate_...(prompt)
+    except Exception as exc:
+        await asyncio.sleep(_RETRY_DELAYS[attempt])
+```
+
+Retries are bounded at 3 attempts with delays of 3s, 6s, 12s. This prevents:
+- Infinite retry storms on persistent API failures
+- Cascading 429 rate limit errors from rapid retries
+
+### 7. Parallel Research Execution
+
+As described in Section 5, parallel researcher execution compresses 3 × T_research into 1 × T_research — the single biggest latency saving in the entire pipeline.
 
 ---
 
-## Performance Improvements
+## 7. Execution Timeline System
 
-This section documents every optimisation applied to bring end-to-end pipeline time from **4+ minutes** down to approximately **60–90 seconds** on a mid-range CPU running Ollama locally.
+### What Is Tracked
 
-### 1. Model Selection
-
-| Before | After | Speedup |
-|---|---|---|
-| `llama3:8b` (4.7 GB, slow on CPU) | `gemma3:4b` (3.3 GB, faster architecture) | ~40% faster per call |
-
-`gemma3:4b` uses a more efficient attention architecture that is noticeably faster for short-to-medium outputs on CPU-only inference. Configure via `.env`:
-
-```env
-OLLAMA_MODEL=gemma3:4b
-```
-
-### 2. Per-Agent Token Budgets (`max_tokens`)
-
-The single biggest source of latency was Ollama generating far more tokens than needed because no limit was enforced. Every extra token is linear extra time on CPU inference.
-
-**Before:** All agents called `generate(prompt)` — Ollama defaulted to its model's full context window (~8 000+ tokens possible).
-
-**After:** `generate()` accepts a `max_tokens` parameter, and each agent passes a budget appropriate to its task:
-
-| Agent | max_tokens | Rationale |
-|---|---|---|
-| Planner | `150` | Only needs a 3-element JSON array — fits in ~60 tokens |
-| Researcher | `400` | 3 concise bullet points per subtask |
-| Writer | `900` | Full Markdown report, but concise |
-| Reviewer | `150` | Only needs `APPROVED` or `REVISION: <one sentence>` |
-
-**Implementation in `llm_client.py`:**
+Every agent execution is recorded as a `Step` object and appended to the task's `steps` list:
 
 ```python
-async def generate(prompt: str, max_tokens: int = 600) -> str:
-    ...
-    return await _generate_ollama(prompt, max_tokens)
-
-async def _generate_ollama(prompt: str, max_tokens: int = 600) -> str:
-    json={
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.7,
-        "max_tokens": max_tokens,   # ← enforced per-call
-    }
+task.steps.append(Step(
+    agent=self.planner.name,    # "planner"
+    output=planner_result.output,
+    timestamp=t0,               # wall-clock start time
+    duration_ms=planner_ms,     # milliseconds elapsed
+))
 ```
 
-### 3. Reduced Subtask Count (Planner)
-
-**Before:** Planner asked for "exactly 4 to 5 research subtasks", capped at `[:5]`.
-
-**After:** Planner asks for exactly **3 subtasks**, capped at `[:3]`.
-
-This cuts the research phase from 4–5 serial LLM calls (when semaphore was limiting concurrency) to 3 fully-parallel calls. Because the 3 calls now run simultaneously under `asyncio.gather`, the research phase takes the time of *one* researcher call rather than multiple.
+For researcher steps, the subtask is also stored:
 
 ```python
-# planner_agent.py
-prompt = (
-    "Break the following task into exactly 3 research subtasks. "
-    "Return ONLY a JSON array of 3 short strings, no explanation.\n"
-    f"Task: {input_data}"
-)
-response = await generate(prompt, max_tokens=150)
-subtasks = subtasks[:3]
+task.steps.append(Step(
+    agent=self.researcher.name,
+    subtask=subtask,             # e.g. "definition of microservices"
+    output=result.output,
+    timestamp=t0,
+    duration_ms=round(ms, 2),
+))
 ```
 
-### 4. Raised Research Concurrency (Semaphore)
-
-**Before:** `asyncio.Semaphore(2)` — only 2 of 5 researchers ran at once; 3 waited.
-
-**After:** `asyncio.Semaphore(3)` — all 3 researchers run simultaneously.
+The Reviewer step stores feedback in `metadata` when a revision is needed:
 
 ```python
-# researcher_agent.py
-research_semaphore = asyncio.Semaphore(3)
+task.steps.append(Step(
+    agent=self.reviewer.name,
+    output=review_result.status,    # "approved" or "revision_needed"
+    timestamp=t0,
+    duration_ms=review_ms,
+    metadata={"feedback": review_result.output} if revision_needed else None,
+))
 ```
 
-With 3 subtasks and a semaphore of 3, `asyncio.gather()` fires all requests to Ollama at once. While Ollama processes them sequentially internally (single GPU/CPU thread), the total wall-clock time for research equals roughly one researcher call.
+### API Endpoints
 
-### 5. Shorter, Focused Prompts
-
-Long verbose prompts waste tokens on instructions the model doesn't need. Each prompt was trimmed to only what the agent must produce:
-
-**Researcher (before):**
-```
-"Provide detailed research notes about the following topic.
-Return 5-6 well-explained bullet points covering key facts, context, and nuances."
-```
-
-**Researcher (after):**
-```
-"Topic: {subtask}
-
-Give 3 concise bullet points of key facts. Be brief."
-```
-
-**Writer (before):**
-```
-"Write a comprehensive, fully-detailed report...
-Each section must be thorough — multiple paragraphs... Do NOT summarize briefly..."
-```
-
-**Writer (after):**
-```
-"Write a clear Markdown report answering the request.
-Use ## headings for each topic, a short intro, and a brief conclusion.
-Be informative but concise."
-```
-
-**Reviewer (before):** No token limit — could generate verbose feedback paragraphs.
-
-**Reviewer (after):** `max_tokens=150` — forces a one-line verdict.
-
-### 6. Retry + Exponential Back-off
-
-Built-in resilience prevents a single transient Ollama error from failing the whole pipeline:
-
-```
-Attempt 1 fails → wait 3 s → Attempt 2
-Attempt 2 fails → wait 6 s → Attempt 3
-Attempt 3 fails → raise exception
-```
-
-HTTP 429 rate-limit responses are detected and logged separately.
-
-### 7. Timing Summary
-
-| Phase | Before | After |
-|---|---|---|
-| Planner | ~38 s (no token cap) | ~5–8 s |
-| Research (3 subtasks, parallel) | ~3 × 40 s = 120 s | ~15–25 s |
-| Writer | ~60 s (unbounded output) | ~25–35 s |
-| Reviewer | ~20 s (verbose) | ~5–8 s |
-| **Total** | **~4+ minutes** | **~60–90 seconds** |
-
----
-
-## Observability Upgrades
-
-### Execution Metrics
-
-Each completed task records how many LLM calls were made, how many retries occurred, and the total wall-clock duration:
+**`GET /task/{task_id}/timeline`** — returns a structured execution timeline:
 
 ```json
 {
-  "id": "abc-123",
-  "status": "done",
-  "metrics": {
-    "llm_calls": 5,
-    "retries": 0,
-    "duration_ms": 74200
-  }
+  "task_id": "abc-123",
+  "query": "Compare microservices vs monoliths",
+  "status": "completed",
+  "start_time": "2024-01-01T10:00:00",
+  "end_time":   "2024-01-01T10:00:12",
+  "total_duration_ms": 12340.5,
+  "timeline": [
+    { "step": 1, "agent": "planner",    "duration_ms": 1204.3, "output_preview": "[\"definition of microservices\"...]" },
+    { "step": 2, "agent": "researcher", "duration_ms": 3401.2, "output_preview": "{\"topic\": \"definition of microservices\"...}" },
+    { "step": 3, "agent": "researcher", "duration_ms": 3201.9, "output_preview": "{\"topic\": \"definition of monoliths\"...}" },
+    { "step": 4, "agent": "researcher", "duration_ms": 3188.7, "output_preview": "{\"topic\": \"advantages vs disadvantages\"...}" },
+    { "step": 5, "agent": "writer",     "duration_ms": 2901.1, "output_preview": "Draft created" },
+    { "step": 6, "agent": "reviewer",   "duration_ms":  412.3, "output_preview": "approved" }
+  ]
 }
 ```
 
-Displayed in the UI as three coloured stat cards (LLM Calls / Retries / Duration).
+**`GET /task/{task_id}/pipeline`** — returns per-agent aggregate stats:
 
-### Structured Timeline Steps
+```json
+{
+  "task_id": "abc-123",
+  "total_duration_ms": 12340.5,
+  "stages": [
+    { "agent": "planner",    "runs": 1, "total_ms": 1204.3 },
+    { "agent": "researcher", "runs": 3, "total_ms": 9791.8 },
+    { "agent": "writer",     "runs": 1, "total_ms": 2901.1 },
+    { "agent": "reviewer",   "runs": 1, "total_ms":  412.3  }
+  ]
+}
+```
 
-Every agent action is stored as a `Step` object with full metadata:
+### Frontend Timeline Component
+
+The `Timeline` React component renders steps as they arrive via polling:
+
+```
+Execution Timeline                                          6 steps
+
+  ● Planner                                    1204 ms    10:00:01
+    Planned 3 subtasks: definition of microservices · definition of (...)
+
+  ● Researcher — definition of microservices   3401 ms    10:00:02
+    {"topic": "definition of microservices", "facts": [...]}
+
+  ● Researcher — definition of monoliths       3201 ms    10:00:02
+    {"topic": "definition of monoliths", ...}
+
+  ● Researcher — advantages vs disadvantages   3188 ms    10:00:02
+    {"topic": "advantages vs disadvantages", ...}
+
+  ● Writer                                     2901 ms    10:00:06
+    Draft created
+
+  ● Reviewer                                    412 ms    10:00:09
+    approved
+```
+
+---
+
+## 8. Data Models and State Management
+
+The system uses [Pydantic v2](https://docs.pydantic.dev/) for all data models. Pydantic provides automatic validation, serialisation, and JSON schema generation — essential for a type-safe API.
+
+### `AgentResult`
+
+**File:** `backend/models/agent_result.py`
+
+```python
+class AgentResult(BaseModel):
+    status: str           # "success" | "approved" | "revision_needed"
+    output: Optional[Any] = None    # agent-specific payload
+    metadata: Optional[Dict] = None # optional extra data
+```
+
+`AgentResult` is the **universal return type** for all agents. By standardising the return contract:
+- The orchestrator can handle any agent result uniformly
+- Status strings drive control flow decisions (`approved`, `revision_needed`)
+- The `output` field carries agent-specific data (list of subtopics, research dict, draft text, verdict)
+
+### `Step`
+
+**File:** `backend/models/task.py`
 
 ```python
 class Step(BaseModel):
-    agent: str               # "planner" | "researcher" | "writer" | "reviewer"
-    subtask: Optional[str]   # e.g. "History of microservices" for researcher steps
-    output: Any              # raw output or summary
-    timestamp: datetime      # when the step started
-    duration_ms: Optional[float]  # how long it took
+    agent: str                    # agent name ("planner", "researcher", ...)
+    subtask: Optional[str] = None # researcher subtopic (if applicable)
+    output: Any                   # agent output snapshot
+    timestamp: datetime           # wall-clock execution start
+    duration_ms: Optional[float]  # execution time in milliseconds
+    metadata: Optional[Dict]      # extra data (e.g. reviewer feedback)
 ```
 
-The `subtask` field means the Timeline in the UI shows `"Researcher — History of microservices"` rather than a generic "researcher" label.
+Each `Step` is an **immutable audit record** of a single agent execution. The ordered list of steps on a `Task` forms the complete execution audit trail.
 
-### Live Status Updates
+### `Task`
 
-The orchestrator calls `save_task(task)` after every status transition, so the frontend polling loop always reflects the real current stage:
+**File:** `backend/models/task.py`
 
+```python
+class Task(BaseModel):
+    id: str                              # UUID
+    query: str                           # original user query
+    status: str                          # current pipeline phase
+    steps: List[Step] = []               # ordered execution log
+    result: Optional[Any] = None         # final report (when completed)
+    start_time: Optional[datetime]       # pipeline start
+    end_time: Optional[datetime]         # pipeline end
+    total_duration_ms: Optional[float]   # wall-clock pipeline duration
+    metrics: Optional[Dict]              # LLM call counts, retries, duration
 ```
-planning → researching → writing → reviewing → done
+
+The `Task` object is the **single source of truth** for a pipeline run. It is:
+- Returned immediately on `POST /run` (with `status="planning"`)
+- Updated in-place as the pipeline progresses
+- Read on every `GET /task/{id}` poll
+- Never destroyed — useful for post-run analysis
+
+### Task Store
+
+**File:** `backend/storage/task_store.py`
+
+```python
+tasks = {}
+
+def save_task(task): tasks[task.id] = task
+def get_task(task_id): return tasks.get(task_id)
 ```
 
-### Reviewer Quality Gate
+The current implementation uses a **Python in-memory dict**. This is intentionally simple for the initial version — the abstraction (two functions, clear interface) makes it trivially replaceable with Redis, PostgreSQL, or any other persistence layer without touching the orchestrator or API layer.
 
-The Reviewer Agent enforces five checks before approving a draft:
+### Why Structured Models Matter in Agentic Systems
 
-- Factual inconsistencies
-- Contradictory dates or numbers
-- Logical errors
-- Missing sections
-- Structural clarity
-
-It returns either `APPROVED` or `REVISION: <specific feedback>`. If a revision is requested, the Writer re-runs with the feedback appended to its prompt. The loop is safeguarded so it cannot run more than a fixed number of times.
-
----
-
-## Frontend Redesign
-
-The UI was rebuilt from scratch with a dark, glass-morphism aesthetic:
-
-| Component | What it does |
+| Without Models | With Pydantic Models |
 |---|---|
-| `Dashboard.jsx` | Two-mode layout: dark hero landing page, then a sticky-header task view once a query is submitted |
-| `TaskInput.jsx` | Glass-style dark input with autofocus and an `initialQuery` prop for pre-population |
-| `PipelineVisualizer.jsx` | Shows all four pipeline stages with per-agent colour themes; pulsing ring on active stage, checkmark SVG when done |
-| `Timeline.jsx` | Expandable step cards with coloured left borders; researcher steps show `"Researcher — {subtask}"` label; shimmer skeleton while loading |
-| `ReportViewer.jsx` | Renders Markdown with `react-markdown`; shows word count badge; download-as-`.md` button |
-| `MetricsCard.jsx` | Three coloured stat cards for LLM Calls, Retries, and Duration |
-| `StatusBadge.jsx` | Dark-mode translucent pill for each pipeline status |
-| `index.css` | Keyframe animations (`slide-up`, `fade-in`, `shimmer`, `gradient-x`), custom scrollbar, `.report-prose` typography |
+| Dict keys typo silently at runtime | Type-checked at model creation |
+| Pipeline state is implicit | State is explicit and queryable |
+| Adding a field touches multiple files | Add to the model once, serialised automatically |
+| Debugging requires print statements | Full task/step history survives until inspection |
 
 ---
 
-## LLM Provider Configuration
+## 9. Frontend Interaction
 
-Set `LLM_PROVIDER` in `backend/.env` to switch providers without touching code:
+**Directory:** `frontend/src/`
 
-| Provider | Config Required |
+The frontend is a **React 18 / Vite / Tailwind** single-page application. It interacts with the backend exclusively through a defined API service layer and renders the agent pipeline in real time.
+
+### Architecture
+
+```
+src/
+├── pages/
+│   └── Dashboard.jsx          ← top-level page, owns all state
+├── components/
+│   ├── TaskInput.jsx           ← query form + submit
+│   ├── PipelineVisualizer.jsx  ← 4-stage horizontal flow diagram
+│   ├── Timeline.jsx            ← ordered step-by-step log
+│   ├── ReportViewer.jsx        ← Markdown report renderer
+│   ├── StatusBadge.jsx         ← animated status badge
+│   └── MetricsCard.jsx         ← LLM calls / retries / duration
+├── hooks/
+│   └── useTaskPolling.js       ← auto-polling hook
+└── services/
+    └── api.js                  ← axios API client (all backend calls)
+```
+
+### Polling with `useTaskPolling`
+
+**File:** `frontend/src/hooks/useTaskPolling.js`
+
+```javascript
+export function useTaskPolling(taskId) {
+  const [task, setTask] = useState(null)
+  const intervalRef = useRef(null)
+
+  useEffect(() => {
+    const poll = async () => {
+      const data = await fetchTask(taskId)
+      setTask(data)
+      if (data.status === 'completed') {
+        clearInterval(intervalRef.current)   // auto-stop polling
+      }
+    }
+
+    poll()
+    intervalRef.current = setInterval(poll, 1500)  // every 1.5 seconds
+    return () => clearInterval(intervalRef.current) // cleanup on unmount
+  }, [taskId])
+
+  return { task, error }
+}
+```
+
+Every 1.5 seconds, the hook fetches the latest task state. When `status === "completed"`, polling stops automatically. This is a clean, self-managing hook with no memory leaks.
+
+### API Service Layer
+
+**File:** `frontend/src/services/api.js`
+
+All backend communication is centralised in a single Axios instance:
+
+```javascript
+const api = axios.create({
+  baseURL: '',       // relative — proxied by Vite to http://localhost:8001
+  timeout: 600000,   // 10 min timeout for local LLM inference
+})
+
+export async function submitTask(query)        // POST /run
+export async function fetchTask(taskId)        // GET /task/{id}
+export async function fetchTimeline(taskId)    // GET /task/{id}/timeline
+export async function fetchPipeline(taskId)    // GET /task/{id}/pipeline
+```
+
+Using a **relative base URL + Vite dev proxy** means the frontend calls `/run` locally, which Vite transparently forwards to `http://localhost:8001/run`. No CORS issues during development, and production deployment only requires changing the proxy target.
+
+### Pipeline Visualiser
+
+**File:** `frontend/src/components/PipelineVisualizer.jsx`
+
+```
+🧠 Planner ──────► 🔍 Researcher ──────► ✍️ Writer ──────► ✅ Reviewer
+  (done ✓)           (done ✓)             (active ⟳)          (idle)
+```
+
+The visualiser maps pipeline status strings to visual node states:
+
+| Task `status` | Node State Logic |
 |---|---|
-| `ollama` | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` (e.g. `gemma3:4b`) |
-| `gemini` | `GEMINI_API_KEY` |
-| `openai` | `OPENAI_API_KEY` |
+| `"planning"` | Planner = active, rest = idle |
+| `"researching"` | Planner = done, Researcher = active |
+| `"writing"` | Planner + Researcher = done, Writer = active |
+| `"reviewing"` | Planner + Researcher + Writer = done, Reviewer = active |
+| `"completed"` | All = done ✓ |
 
-All providers flow through the same `generate(prompt, max_tokens)` interface.
+Active nodes display a **pulsing ring animation** (CSS `animate-ping`). Done nodes show a **green checkmark**. Idle nodes are greyed out. Connector arrows between nodes light up progressively as stages complete.
+
+### Report Viewer
+
+**File:** `frontend/src/components/ReportViewer.jsx`
+
+Renders the final Markdown report using `react-markdown`. Additional features:
+- **Copy to clipboard** button with "Copied ✓" feedback
+- **Download as `.md` file** via Blob URL
+- **Word count + read time** estimate in the header
+- **Shimmer skeleton** shown while the report is being generated（`result === null`）
+
+### Status Badge
+
+**File:** `frontend/src/components/StatusBadge.jsx`
+
+Each pipeline status maps to a distinct colour and animated dot:
+
+| Status | Colour | Animation |
+|---|---|---|
+| `planning` | Blue | Pulsing dot |
+| `researching` | Violet | Pulsing dot |
+| `writing` | Amber | Pulsing dot |
+| `reviewing` | Orange | Pulsing dot |
+| `completed` | Emerald | Static dot |
+| `error` | Red | Static dot |
 
 ---
 
-## Running the System
+## 10. Design Principles
 
-### Prerequisites
+### 1. Clean Abstractions
 
-- Python 3.11+, Node 18+
-- [Ollama](https://ollama.com) installed and running (`ollama serve`)
-- Model pulled: `ollama pull gemma3:4b`
+The `Agent` ABC enforces a minimal interface (`name`, `async run()`). The `Orchestrator` never inspects agent internals — it only calls `run()` and reads `AgentResult`. This makes agents independently testable and swappable.
+
+### 2. Separation of Concerns
+
+| Layer | Responsibility |
+|---|---|
+| `agents/` | LLM prompting, parsing, fallbacks |
+| `orchestrator/` | Sequencing, timing, state management |
+| `api/` | HTTP routing, request/response shaping |
+| `models/` | Data structures, validation |
+| `storage/` | Persistence (currently RAM, replaceable) |
+| `llm/` | Provider abstraction, retries, metrics |
+
+No layer crosses into another's domain.
+
+### 3. Modular Agent Design
+
+Adding a new agent (e.g. a `FactCheckerAgent`) requires:
+1. Create a file in `agents/`
+2. Extend `Agent` ABC
+3. Add one call site in `orchestrator.py`
+
+No other code changes needed.
+
+### 4. Async-First Architecture
+
+Every blocking operation is `await`-ed. The event loop is never blocked. This means:
+- Multiple pipeline requests can run concurrently on a single server process
+- Polling requests are served instantly while pipelines execute in the background
+- I/O (LLM API calls) yields control, enabling other tasks to progress
+
+### 5. Observable Pipelines
+
+Every agent call is timed, logged, and stored. The backend exposes three levels of observability:
+- `GET /task/{id}` — full task state with all steps
+- `GET /task/{id}/timeline` — chronological execution log with durations
+- `GET /task/{id}/pipeline` — per-agent aggregate performance
+
+The frontend renders all three levels simultaneously.
+
+### 6. Fail-Open Resilience
+
+Every agent has a fallback path:
+- **Planner:** returns hardcoded subtopics on LLM failure
+- **Researcher:** returns a placeholder research object per subtopic
+- **Writer:** returns raw research text as a basic report
+- **Reviewer:** defaults to `approved` on ambiguous or failed responses
+
+The pipeline **never crashes** due to a single agent failure. Degraded output is always preferred over a broken pipeline.
+
+### 7. Provider Agnosticism
+
+The `llm_client.py` supports three backends behind a single `generate()` function:
+
+```python
+if config.LLM_PROVIDER == "gemini":   return await _generate_gemini(prompt)
+if config.LLM_PROVIDER == "ollama":   return await _generate_ollama(prompt, max_tokens)
+                                       return await _generate_openai(prompt, max_tokens)
+```
+
+Switching providers requires only changing a single environment variable (`LLM_PROVIDER`). No agent code changes.
+
+### 8. Extensibility
+
+The system is designed for extension, not modification:
+- New agents → define and wire up, no changes to existing agents
+- New providers → add a `_generate_xxx()` function to `llm_client.py`
+- New storage → swap out `task_store.py`
+- New API endpoints → add to `routes.py`
+
+---
+
+## 11. Example Execution Flow
+
+### Query: `"How does GPT-4 work?"`
+
+```
+t=0ms     User submits query via TaskInput component
+             POST /run { "query": "How does GPT-4 work?" }
+
+t=3ms     API creates Task { id: "f4a7...", status: "planning" }
+          asyncio.create_task(orchestrator.run("f4a7..."))
+          API returns immediately → frontend starts polling
+
+t=5ms     [Orchestrator] Pipeline start, snapshot metrics_before
+          [Orchestrator] Calls PlannerAgent.run("How does GPT-4 work?")
+
+t=1200ms  [PlannerAgent] LLM responds:
+            ["transformer architecture", "training methodology", "RLHF alignment"]
+          Step appended: { agent: "planner", duration_ms: 1195, output: [...] }
+          task.status → "researching", save_task()
+
+t=1205ms  [Orchestrator] asyncio.gather() fires 3 researchers simultaneously:
+            ResearcherAgent.run("transformer architecture")
+            ResearcherAgent.run("training methodology")
+            ResearcherAgent.run("RLHF alignment")
+
+          ← All 3 run concurrently, each making one LLM call →
+
+t=4800ms  [Researcher × 3] All complete (concurrent, not sequential)
+          Steps appended for each:
+            { agent: "researcher", subtask: "transformer architecture", duration_ms: 3192 }
+            { agent: "researcher", subtask: "training methodology",      duration_ms: 3088 }
+            { agent: "researcher", subtask: "RLHF alignment",            duration_ms: 2941 }
+          task.status → "writing", save_task()
+
+t=4802ms  [Orchestrator] Calls WriterAgent.run(query, subtasks, research_outputs)
+          Writer receives structured research → synthesises Markdown report
+
+t=7500ms  [WriterAgent] Draft completed:
+          "# GPT-4: Architecture and Training\n\n## Transformer Architecture\n..."
+          Step appended: { agent: "writer", duration_ms: 2698, output: "Draft created" }
+          task.status → "reviewing", save_task()
+
+t=7502ms  [ReviewerAgent] Receives draft, sends 80-token verdict prompt
+
+t=7900ms  [ReviewerAgent] Response: "APPROVED"
+          Step appended: { agent: "reviewer", duration_ms: 398, output: "approved" }
+
+t=7902ms  [Orchestrator] Review loop exits (approved on first attempt)
+          task.status → "completed"
+          task.result  = "# GPT-4: Architecture and Training\n\n..."
+          task.metrics = { llm_calls: 5, retries: 0, duration_ms: 7902 }
+          save_task()
+
+t=9000ms  [Frontend] Polling detects status === "completed"
+          useTaskPolling stops interval
+          ReportViewer renders the Markdown report
+          MetricsCard shows: LLM Calls: 5, Retries: 0, Duration: 7.9s
+          PipelineVisualizer: all 4 stages show green ✓
+          Timeline: 6 steps displayed with timestamps and durations
+```
+
+### Summary of the Execution
+
+| Phase | Time | LLM Calls |
+|---|---|---|
+| Planning | 1.2s | 1 |
+| Research (parallel) | 3.6s (wall clock) | 3 simultaneous |
+| Writing | 2.7s | 1 |
+| Review | 0.4s | 1 |
+| **Total** | **~7.9s** | **6** |
+
+Without parallelism, research alone would take ~9s (3 × 3s). Parallel execution compresses that to ~3.6s — nearly a 60% reduction in total pipeline time.
+
+---
+
+## 12. Future Improvements
+
+### 1. Dynamic DAG Pipelines
+
+Replace the hardcoded linear pipeline with a directed acyclic graph (DAG) scheduler. The orchestrator would accept a pipeline definition like:
+
+```python
+pipeline = {
+    "planner": [],
+    "researcher": ["planner"],
+    "fact_checker": ["researcher"],
+    "writer": ["fact_checker"],
+    "reviewer": ["writer"],
+}
+```
+
+This enables arbitrary agent topologies, conditional branches, and merge/fan-out nodes without changing orchestrator logic.
+
+### 2. Streaming LLM Outputs
+
+Integrate streaming API responses (Server-Sent Events or WebSocket) to begin rendering the report as the Writer generates it token-by-token, rather than waiting for the complete response.
+
+### 3. Vector Memory for Agents
+
+Give researcher agents access to a vector database (e.g. Pinecone, Chroma) to retrieve relevant context from previous research runs. This would:
+- Reduce redundant LLM calls for repeated topics
+- Enable retrieval-augmented generation (RAG) workflows
+- Allow the system to build a growing knowledge base
+
+### 4. Persistent Task Storage
+
+Replace the in-memory `task_store.py` with a proper persistence layer (Redis for hot tasks, PostgreSQL for archived tasks). This would survive server restarts and enable multi-instance deployments.
+
+### 5. User-Configurable Pipelines
+
+Expose a UI where users can define the pipeline topology — add/remove agents, set concurrency limits, define approval thresholds, and choose which LLM provider each agent uses.
+
+### 6. Agent Plugins
+
+Define an agent plugin interface that allows third-party agents to be installed (e.g. a web search agent using SerpAPI, a code execution agent using a sandboxed Python runtime).
+
+### 7. Streaming Pipeline Events
+
+Replace the polling architecture with WebSocket push events. The backend would stream each step completion event to the frontend the moment it occurs, reducing perceived latency and eliminating polling overhead.
+
+### 8. Multi-Level Reviewer
+
+Add a panel of specialist reviewers (factual accuracy, style, completeness) that independently evaluate the draft. Their verdicts are aggregated with a majority-vote or weighted-score mechanism.
+
+### 9. Evaluation Metrics
+
+Track report quality metrics over time: citation accuracy, completeness score, reading level, sentiment. Use these to automatically tune prompts and evaluate the impact of model changes.
+
+---
+
+## 13. Technical Stack
 
 ### Backend
 
-```powershell
-cd multi-agent-system/backend
-$env:PYTHONPATH = (Get-Location).Path
-& "..\..\venv\Scripts\uvicorn.exe" main:app --port 8001 --reload
-```
+| Technology | Version | Purpose |
+|---|---|---|
+| **Python** | 3.11+ | Core language |
+| **FastAPI** | 0.110+ | Async HTTP framework |
+| **Uvicorn** | latest | ASGI server |
+| **Pydantic v2** | latest | Data validation and serialisation |
+| **asyncio** | stdlib | Native concurrency primitives |
+| **httpx** | latest | Async HTTP client (shared LLM connection) |
+| **python-dotenv** | latest | Environment variable management |
+| **google-genai** | latest | Google Gemini SDK |
 
 ### Frontend
 
-```powershell
-cd multi-agent-system/frontend
-npm install
-npm run dev          # starts on http://localhost:3000
-```
+| Technology | Version | Purpose |
+|---|---|---|
+| **React** | 18 | UI framework |
+| **Vite** | 5 | Dev server and bundler |
+| **Tailwind CSS** | 3.4 | Utility-first styling |
+| **Axios** | 1.6 | HTTP client |
+| **react-markdown** | 10 | Markdown report rendering |
+| **@tailwindcss/typography** | 0.5 | Prose styling for rendered Markdown |
 
-Open `http://localhost:3000` — the Vite proxy forwards API calls to `http://localhost:8001`.
+### LLM Providers (configurable)
 
-### Health Check
-
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8001/health"
-```
+| Provider | Model | Deployment |
+|---|---|---|
+| **Google Gemini** | `gemini-2.5-flash` (default) | Cloud API |
+| **OpenAI** | `gpt-4o-mini` (configurable) | Cloud API |
+| **Ollama** | `llama3:8b` (configurable) | Local self-hosted |
 
 ---
 
-## Project Structure
+## 14. Getting Started
+
+### Prerequisites
+
+- Python 3.11+
+- Node.js 18+
+- An API key for Gemini, OpenAI, or a local Ollama installation
+
+### Backend Setup
+
+```bash
+# 1. Navigate to the backend directory
+cd multi-agent-system/backend
+
+# 2. Create and activate a virtual environment
+python -m venv venv
+venv\Scripts\activate      # Windows
+# source venv/bin/activate  # macOS/Linux
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Configure environment
+cp .env.example .env
+# Edit .env — set LLM_PROVIDER and the relevant API key
+
+# 5. Start the backend
+uvicorn main:app --reload --port 8001
+```
+
+### Frontend Setup
+
+```bash
+# 1. Navigate to the frontend directory
+cd multi-agent-system/frontend
+
+# 2. Install dependencies
+npm install
+
+# 3. Start the dev server (proxies API to :8001)
+npm run dev
+```
+
+Visit `http://localhost:5173` in your browser.
+
+### Environment Variables
+
+```env
+# .env (backend)
+
+# Enable or disable real LLM calls (set to false for local testing without API key)
+USE_LLM=true
+
+# Provider: "gemini", "openai", or "ollama"
+LLM_PROVIDER=gemini
+
+# Google Gemini (recommended — fast, free tier available)
+GEMINI_API_KEY=your-gemini-api-key-here
+GEMINI_MODEL=gemini-2.5-flash
+
+# OpenAI (alternative)
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+
+# Ollama (local, no API key required)
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3:8b
+```
+
+### Project Structure
 
 ```
 multi-agent-system/
-├── README.md
 ├── backend/
-│   ├── .env                    # LLM credentials and config (not committed)
-│   ├── main.py
-│   ├── config.py
+│   ├── main.py                    # FastAPI app + CORS setup
+│   ├── config.py                  # Environment-driven configuration
 │   ├── requirements.txt
+│   ├── .env.example
 │   ├── agents/
-│   │   ├── base_agent.py
-│   │   ├── planner_agent.py    # max_tokens=150, 3 subtasks
-│   │   ├── researcher_agent.py # max_tokens=400, Semaphore(3)
-│   │   ├── writer_agent.py     # max_tokens=900
-│   │   └── reviewer_agent.py   # max_tokens=150, quality gate
-│   ├── llm/
-│   │   └── llm_client.py       # generate(prompt, max_tokens), retry, metrics
-│   ├── models/
-│   │   ├── task.py             # Task + Step (with subtask, duration_ms)
-│   │   └── agent_result.py
+│   │   ├── base_agent.py          # Abstract Agent ABC
+│   │   ├── planner_agent.py       # Task decomposition
+│   │   ├── researcher_agent.py    # Parallel fact collection
+│   │   ├── writer_agent.py        # Report synthesis
+│   │   └── reviewer_agent.py      # Quality gate
 │   ├── orchestrator/
-│   │   └── orchestrator.py     # Pipeline wiring + live status saves
+│   │   └── orchestrator.py        # Pipeline coordination engine
+│   ├── models/
+│   │   ├── task.py                # Task + Step Pydantic models
+│   │   └── agent_result.py        # AgentResult model
 │   ├── api/
-│   │   └── routes.py
+│   │   └── routes.py              # REST endpoints
+│   ├── llm/
+│   │   └── llm_client.py          # Multi-provider LLM client
 │   └── storage/
-│       └── task_store.py
+│       └── task_store.py          # In-memory task store
 └── frontend/
+    ├── index.html
+    ├── vite.config.js
     ├── package.json
-    ├── vite.config.js           # Proxy: /run, /task, /health → :8001
-    ├── tailwind.config.js
     └── src/
         ├── App.jsx
+        ├── main.jsx
         ├── index.css
-        ├── pages/Dashboard.jsx
+        ├── pages/
+        │   └── Dashboard.jsx      # Top-level page with all state
         ├── components/
-        │   ├── TaskInput.jsx
-        │   ├── PipelineVisualizer.jsx
-        │   ├── Timeline.jsx
-        │   ├── ReportViewer.jsx
-        │   ├── MetricsCard.jsx
-        │   └── StatusBadge.jsx
-        ├── hooks/useTaskPolling.js
-        └── services/api.js      # baseURL: '' (uses Vite proxy)
+        │   ├── TaskInput.jsx       # Query input form
+        │   ├── PipelineVisualizer.jsx # Live stage flow diagram
+        │   ├── Timeline.jsx        # Step-by-step execution log
+        │   ├── ReportViewer.jsx    # Markdown report renderer
+        │   ├── StatusBadge.jsx     # Animated status indicator
+        │   └── MetricsCard.jsx     # Performance summary
+        ├── hooks/
+        │   └── useTaskPolling.js   # Auto-polling hook
+        └── services/
+            └── api.js              # Axios API service layer
 ```
 
 ---
 
-## Environment Variables
+## 15. Conclusion
 
-```env
-# backend/.env
+Agentic architectures represent a fundamental shift in how we design AI systems. Rather than asking a single model to do everything, we decompose complex tasks into **specialised, composable agents** that each do one thing extraordinarily well.
 
-LLM_PROVIDER=ollama          # ollama | gemini | openai
-USE_LLM=true
+This system demonstrates why this approach is powerful:
 
-# Ollama (local)
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=gemma3:4b       # recommended: fast 3.3 GB model
+**Specialisation beats generalisation.** A planner that only decomposes tasks generates better subtopics than a generalist. A reviewer that only evaluates quality gives sharper feedback than a model switching contexts.
 
-# Cloud fallbacks
-GEMINI_API_KEY=your_key_here
-OPENAI_API_KEY=your_key_here
-```
+**Parallelism is free performance.** Independent research tasks have no data dependency on each other. Running them concurrently with `asyncio.gather()` is zero additional engineering cost for a ~60% latency improvement.
+
+**Observability enables iteration.** Full step-by-step timing means you can immediately see whether the planner, researcher, writer, or reviewer is the bottleneck — and fix it.
+
+**Structure beats prose.** Agents that return structured JSON rather than free text eliminate downstream parsing complexity, improve reliability, and make data easy to inspect and route.
+
+**Resilience through fallbacks.** Every agent has a fallback path. The system degrades gracefully under API failures rather than crashing. A degraded research pipeline that returns a partial report is infinitely more useful than a 500 error.
+
+The pipeline in this project is intentionally simple — four agents, one linear flow. But the architecture scales naturally to **DAG-based pipelines with dozens of specialist agents**, persistent vector memory, streaming outputs, and user-defined workflows. The foundation is here. The ceiling is the complexity of the problems you want to solve.
+
+---
+
+<div align="center">
+
+Built with Python · FastAPI · AsyncIO · React · Vite
+
+*Planner → Researcher → Writer → Reviewer → Done.*
+
+</div>
