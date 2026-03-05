@@ -23,7 +23,8 @@ class WriterAgent(Agent):
                 f"Research Notes:\n{notes}\n\n"
                 "Write a clear Markdown report answering the request. "
                 "Use ## headings for each topic, a short intro, and a brief conclusion. "
-                "Be informative but concise."
+                "IMPORTANT: Only use facts that appear in the Research Notes above. "
+                "Do not add any information, statistics, or claims not present in the notes."
             )
             report = await generate(prompt, max_tokens=900)
             return AgentResult(status="success", output=report)

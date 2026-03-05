@@ -22,17 +22,17 @@ class ReviewerAgent(Agent):
             from llm.llm_client import generate
 
             prompt = (
-                "Review the following report.\n\n"
-                "Check for:\n"
-                "* factual inconsistencies\n"
-                "* contradictory dates or numbers\n"
-                "* logical errors\n"
-                "* missing sections\n"
-                "* clarity of structure\n\n"
+                "You are reviewing a short AI-generated report. "
+                "Your default should be to APPROVE. "
+                "Only request a REVISION if there is a clear, objective problem that significantly hurts the reader — "
+                "such as a directly contradictory statement (e.g. two sentences that say the opposite thing) "
+                "or a completely missing section that was obviously required.\n\n"
+                "Do NOT request a revision for: minor wording issues, lack of depth, style preferences, "
+                "or anything that is merely 'could be better'.\n\n"
                 "Return ONLY one of the following:\n\n"
                 "APPROVED\n\n"
                 "or\n\n"
-                "REVISION: <specific feedback explaining the problem>\n\n"
+                "REVISION: <one sentence describing a clear factual contradiction or missing required section>\n\n"
                 f"Report:\n{draft}"
             )
             response = await generate(prompt, max_tokens=150)

@@ -25,7 +25,9 @@ class ResearcherAgent(Agent):
 
                 prompt = (
                     f"Topic: {subtask}\n\n"
-                    "Give 3 concise bullet points of key facts. Be brief."
+                    "Give exactly 3 bullet points of well-known, verified facts about this topic. "
+                    "Only state facts you are certain about. "
+                    "Do not speculate, invent details, or add information you are unsure of."
                 )
                 result = await generate(prompt, max_tokens=400)
                 return AgentResult(status="success", output=result)

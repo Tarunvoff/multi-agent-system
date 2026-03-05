@@ -1,7 +1,6 @@
 import asyncio
 import os
 import httpx
-from google import genai
 
 # ---------------------------------------------------------------------------
 # Lightweight metrics — global counters snapshotted per-task by orchestrator
@@ -81,7 +80,8 @@ async def _generate_ollama(prompt: str, max_tokens: int = 600) -> str:
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.7,
+                "temperature": 0.1,
+                "top_p": 0.9,
                 "max_tokens": max_tokens,
             },
             timeout=600.0,  # local inference can be slow
@@ -121,6 +121,7 @@ async def _generate_gemini(prompt: str) -> str:
     if not api_key:
         raise ValueError("GEMINI_API_KEY is not set")
 
+    from google import genai  # lazy import — only needed when provider=gemini
     client = genai.Client(api_key=api_key)
     response = await client.aio.models.generate_content(
         model="gemini-2.5-flash",
