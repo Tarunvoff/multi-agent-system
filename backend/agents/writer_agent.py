@@ -4,31 +4,43 @@ from config import USE_LLM
 from llm.llm_client import generate
 
 
+def _format_research(research_outputs: list) -> str:
+    """Convert structured research dicts (or plain strings) into prompt-ready text."""
+    sections = []
+    for item in research_outputs:
+        if isinstance(item, dict):
+            topic = item.get("topic", "")
+            facts = item.get("facts", [])
+            bullet_facts = "\n".join(f"- {f}" for f in facts)
+            sections.append(f"### {topic}\n{bullet_facts}")
+        else:
+            sections.append(str(item))
+    return "\n\n".join(sections)
+
+
 class WriterAgent(Agent):
 
     @property
     def name(self) -> str:
         return "writer"
 
-    async def run(self, user_query: str, topics: list[str], research_outputs: list[str]) -> AgentResult:
+    async def run(self, user_query: str, topics: list[str], research_outputs: list) -> AgentResult:
+        research_text = _format_research(research_outputs)
+
         if not USE_LLM:
-            return AgentResult(status="success", output="Final Report:\n\n" + "\n".join(research_outputs))
+            return AgentResult(status="success", output=f"# Report\n\n{research_text}")
 
         try:
-            topics_str = "\n".join(f"- {t}" for t in topics)
-            notes = "\n\n".join(research_outputs)
             prompt = (
-                f"User Request: {user_query}\n\n"
-                f"Research Topics:\n{topics_str}\n\n"
-                f"Research Notes:\n{notes}\n\n"
-                "Write a clear Markdown report answering the request. "
-                "Use ## headings for each topic, a short intro, and a brief conclusion. "
-                "IMPORTANT: Only use facts that appear in the Research Notes above. "
-                "Do not add any information, statistics, or claims not present in the notes."
+                f"Request: {user_query}\n\n"
+                f"Research:\n{research_text}\n\n"
+                "Write a Markdown report using ONLY the facts above.\n"
+                "Format: one-sentence intro, ## heading per topic, bullet facts, one-sentence conclusion.\n"
+                "Max 150 words. No extra commentary."
             )
-            report = await generate(prompt, max_tokens=900)
+            report = await generate(prompt, max_tokens=500)
             return AgentResult(status="success", output=report)
 
         except Exception as e:
             print(f"[WriterAgent] LLM error: {e}")
-            return AgentResult(status="success", output="Final Report:\n\n" + "\n".join(research_outputs))
+            return AgentResult(status="success", output=f"# Report\n\n{research_text}")

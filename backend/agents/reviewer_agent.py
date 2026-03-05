@@ -16,31 +16,30 @@ class ReviewerAgent(Agent):
         if not USE_LLM:
             if random.random() < 0.3:
                 return AgentResult(status="revision_needed", output="Please expand the scalability section.")
-            return AgentResult(status="approved", output="Report approved.")
+            return AgentResult(status="approved", output="APPROVED")
 
         try:
             prompt = (
-                "You are reviewing a short AI-generated report. "
-                "Your default should be to APPROVE. "
-                "Only request a REVISION if there is a clear, objective problem that significantly "
-                "hurts the reader — such as a directly contradictory statement or a completely "
-                "missing section that was obviously required.\n\n"
-                "Do NOT request a revision for minor wording, lack of depth, or style preferences.\n\n"
-                "Return ONLY one of:\n\nAPPROVED\n\nor\n\n"
-                "REVISION: <one sentence describing the problem>\n\n"
+                "Review this report. Default to APPROVED.\n"
+                "Only flag a revision if there is a clear factual contradiction or an obviously missing required section.\n\n"
+                "Return EXACTLY one of:\n"
+                "  APPROVED\n"
+                "  REVISION_NEEDED: <issue1>; <issue2>\n\n"
+                "No other text.\n\n"
                 f"Report:\n{draft}"
             )
-            response = (await generate(prompt, max_tokens=150)).strip()
+            response = (await generate(prompt, max_tokens=80)).strip()
 
-            if response.upper().startswith("APPROVED"):
-                return AgentResult(status="approved", output="Report approved.")
-            if response.upper().startswith("REVISION"):
-                feedback = response[response.find(":") + 1:].strip() if ":" in response else response
-                return AgentResult(status="revision_needed", output=feedback)
+            upper = response.upper()
+            if upper.startswith("APPROVED"):
+                return AgentResult(status="approved", output="APPROVED")
+            if upper.startswith("REVISION_NEEDED"):
+                issues = response[response.find(":") + 1:].strip() if ":" in response else response
+                return AgentResult(status="revision_needed", output=issues)
 
-            # Ambiguous response — approve to avoid infinite loops
-            return AgentResult(status="approved", output="Report approved.")
+            # Ambiguous — approve to break potential loops
+            return AgentResult(status="approved", output="APPROVED")
 
         except Exception as e:
             print(f"[ReviewerAgent] LLM error: {e}")
-            return AgentResult(status="approved", output="Report approved.")
+            return AgentResult(status="approved", output="APPROVED")

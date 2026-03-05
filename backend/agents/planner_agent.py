@@ -8,9 +8,7 @@ from llm.llm_client import generate
 _FALLBACK_SUBTASKS = [
     "definition of microservices",
     "definition of monoliths",
-    "advantages comparison",
-    "disadvantages comparison",
-    "final comparison summary",
+    "advantages vs disadvantages",
 ]
 
 
@@ -26,13 +24,12 @@ class PlannerAgent(Agent):
 
         try:
             prompt = (
-                "Break the following task into exactly 3 research subtasks. "
-                "Return ONLY a JSON array of 3 short strings, no explanation.\n"
-                f"Task: {input_data}"
+                f'Task: {input_data}\n\n'
+                'Return ONLY a JSON array of exactly 3 short research subtopic strings.\n'
+                'No explanation. No markdown. Example: ["subtopic 1", "subtopic 2", "subtopic 3"]'
             )
-            response = (await generate(prompt, max_tokens=150)).strip()
+            response = (await generate(prompt, max_tokens=100)).strip()
 
-            # Extract JSON array even if the model wraps it in markdown fences
             start, end = response.find("["), response.rfind("]") + 1
             raw = response[start:end] if start != -1 and end > start else response
             subtasks = json.loads(raw)
