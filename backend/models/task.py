@@ -9,6 +9,7 @@ class Step(BaseModel):
     output: Any
     timestamp: datetime
     duration_ms: Optional[float] = None
+    metadata: Optional[Dict] = None
 
 
 class Task(BaseModel):

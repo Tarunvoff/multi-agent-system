@@ -1,28 +1,26 @@
 import asyncio
+
 from agents.base_agent import Agent
 from models.agent_result import AgentResult
+from config import USE_LLM
+from llm.llm_client import generate
 
 # Limit concurrent LLM calls to avoid free-tier rate limits
-research_semaphore = asyncio.Semaphore(3)
+_semaphore = asyncio.Semaphore(3)
 
 
 class ResearcherAgent(Agent):
 
-    name = "researcher"
+    @property
+    def name(self) -> str:
+        return "researcher"
 
-    async def run(self, subtask):
-        from config import USE_LLM
-
+    async def run(self, subtask: str) -> AgentResult:
         if not USE_LLM:
-            return AgentResult(
-                status="success",
-                output=f"Research findings about {subtask}.",
-            )
+            return AgentResult(status="success", output=f"Research findings about {subtask}.")
 
-        async with research_semaphore:
+        async with _semaphore:
             try:
-                from llm.llm_client import generate
-
                 prompt = (
                     f"Topic: {subtask}\n\n"
                     "Give exactly 3 bullet points of well-known, verified facts about this topic. "
@@ -33,8 +31,5 @@ class ResearcherAgent(Agent):
                 return AgentResult(status="success", output=result)
 
             except Exception as e:
-                print(f"[ResearcherAgent] LLM error after retries: {str(e)[:120]}")
-                return AgentResult(
-                    status="success",
-                    output=f"Research findings about {subtask}.",
-                )
+                print(f"[ResearcherAgent] LLM error: {str(e)[:120]}")
+                return AgentResult(status="success", output=f"Research findings about {subtask}.")

@@ -1,6 +1,9 @@
 import json
+
 from agents.base_agent import Agent
 from models.agent_result import AgentResult
+from config import USE_LLM
+from llm.llm_client import generate
 
 _FALLBACK_SUBTASKS = [
     "definition of microservices",
@@ -13,37 +16,28 @@ _FALLBACK_SUBTASKS = [
 
 class PlannerAgent(Agent):
 
-    name = "planner"
+    @property
+    def name(self) -> str:
+        return "planner"
 
-    async def run(self, input_data):
-        from config import USE_LLM
-
+    async def run(self, input_data: str) -> AgentResult:
         if not USE_LLM:
             return AgentResult(status="success", output=_FALLBACK_SUBTASKS)
 
         try:
-            from llm.llm_client import generate
-
             prompt = (
                 "Break the following task into exactly 3 research subtasks. "
                 "Return ONLY a JSON array of 3 short strings, no explanation.\n"
                 f"Task: {input_data}"
             )
-            response = await generate(prompt, max_tokens=150)
-            response = response.strip()
+            response = (await generate(prompt, max_tokens=150)).strip()
 
-            # Extract the JSON array even if the model wraps it in markdown fences
-            start = response.find("[")
-            end = response.rfind("]") + 1
-            if start != -1 and end > start:
-                subtasks = json.loads(response[start:end])
-            else:
-                subtasks = json.loads(response)
+            # Extract JSON array even if the model wraps it in markdown fences
+            start, end = response.find("["), response.rfind("]") + 1
+            raw = response[start:end] if start != -1 and end > start else response
+            subtasks = json.loads(raw)
 
-            # Hard cap — never spawn more than 3 parallel researchers
-            subtasks = subtasks[:3]
-
-            return AgentResult(status="success", output=subtasks)
+            return AgentResult(status="success", output=subtasks[:3])
 
         except Exception as e:
             print(f"[PlannerAgent] LLM error: {e}")
