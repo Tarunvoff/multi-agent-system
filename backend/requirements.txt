@@ -5,3 +5,6 @@ python-multipart
 httpx
 python-dotenv
 google-genai
+sqlmodel
+pytest
+pytest-asyncio

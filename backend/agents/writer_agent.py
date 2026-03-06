@@ -1,7 +1,11 @@
+import logging
+
 from agents.base_agent import Agent
 from models.agent_result import AgentResult
 from config import USE_LLM
 from llm.llm_client import generate
+
+log = logging.getLogger(__name__)
 
 
 def _format_research(research_outputs: list) -> str:
@@ -42,5 +46,5 @@ class WriterAgent(Agent):
             return AgentResult(status="success", output=report)
 
         except Exception as e:
-            print(f"[WriterAgent] LLM error: {e}")
+            log.warning("LLM error: %s", e)
             return AgentResult(status="success", output=f"# Report\n\n{research_text}")

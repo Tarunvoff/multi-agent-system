@@ -1,10 +1,11 @@
 import React, { useState } from 'react'
 
 const AGENT_CFG = {
-  planner:    { label: 'Planner',    border: 'border-blue-400',    dot: 'bg-blue-500',    text: 'text-blue-700',    badge: 'bg-blue-50 text-blue-600'     },
-  researcher: { label: 'Researcher', border: 'border-violet-400',  dot: 'bg-violet-500',  text: 'text-violet-700',  badge: 'bg-violet-50 text-violet-600'  },
-  writer:     { label: 'Writer',     border: 'border-amber-400',   dot: 'bg-amber-500',   text: 'text-amber-700',   badge: 'bg-amber-50 text-amber-600'    },
-  reviewer:   { label: 'Reviewer',   border: 'border-emerald-400', dot: 'bg-emerald-500', text: 'text-emerald-700', badge: 'bg-emerald-50 text-emerald-600' },
+  planner:     { label: 'Planner',      border: 'border-blue-400',    dot: 'bg-blue-500',    text: 'text-blue-700',    badge: 'bg-blue-50 text-blue-600'       },
+  researcher:  { label: 'Researcher',   border: 'border-violet-400',  dot: 'bg-violet-500',  text: 'text-violet-700',  badge: 'bg-violet-50 text-violet-600'   },
+  factchecker: { label: 'Fact Checker', border: 'border-cyan-400',    dot: 'bg-cyan-500',    text: 'text-cyan-700',    badge: 'bg-cyan-50 text-cyan-600'       },
+  writer:      { label: 'Writer',       border: 'border-amber-400',   dot: 'bg-amber-500',   text: 'text-amber-700',   badge: 'bg-amber-50 text-amber-600'     },
+  reviewer:    { label: 'Reviewer',     border: 'border-emerald-400', dot: 'bg-emerald-500', text: 'text-emerald-700', badge: 'bg-emerald-50 text-emerald-600' },
 }
 
 function formatTime(ts) {
@@ -34,6 +35,7 @@ function StepCard({ step, index }) {
   }
 
   const rawOutput = formatOutput(step.agent, step.output)
+  const feedback  = step.metadata?.feedback
   const isLong    = rawOutput.length > 130
   const preview   = expanded || !isLong ? rawOutput : rawOutput.slice(0, 130) + '…'
   const duration  = formatDuration(step.duration_ms)
@@ -64,6 +66,13 @@ function StepCard({ step, index }) {
       </div>
 
       <p className="text-xs text-gray-500 leading-relaxed ml-3.5">{preview}</p>
+
+      {feedback && (
+        <div className="ml-3.5 mt-1.5 px-2.5 py-1.5 rounded-md bg-amber-50 border border-amber-200">
+          <p className="text-xs font-semibold text-amber-700 mb-0.5">Revision requested:</p>
+          <p className="text-xs text-amber-600 leading-relaxed">{feedback}</p>
+        </div>
+      )}
 
       {isLong && (
         <button

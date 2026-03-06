@@ -11,17 +11,17 @@ export function useTaskPolling(taskId) {
   const intervalRef = useRef(null)
 
   useEffect(() => {
-    if (!taskId) return
+    if (!taskId) {
+      setTask(null)
+      setError(null)
+      return
+    }
 
     const poll = async () => {
       try {
         const data = await fetchTask(taskId)
         setTask(data)
-        if (data.status === 'completed') {
-          clearInterval(intervalRef.current)
-        }
-      } catch (err) {
-        setError(err.message || 'Polling error')
+        if (data.status === 'completed' || data.status === 'error') {
         clearInterval(intervalRef.current)
       }
     }

@@ -10,37 +10,123 @@
 
 ---
 
-## Table of Contents
+## Quick Overview
 
-1. [Project Overview](#1-project-overview)
-2. [Agentic System Architecture](#2-agentic-system-architecture)
-3. [Agent Responsibilities](#3-agent-responsibilities)
-4. [Orchestrator Design](#4-orchestrator-design)
-5. [Parallel Processing Strategy](#5-parallel-processing-strategy)
-6. [Low Latency Optimisations](#6-low-latency-optimisations)
-7. [Execution Timeline System](#7-execution-timeline-system)
-8. [Data Models and State Management](#8-data-models-and-state-management)
-9. [Frontend Interaction](#9-frontend-interaction)
-10. [Design Principles](#10-design-principles)
-11. [Example Execution Flow](#11-example-execution-flow)
-12. [Future Improvements](#12-future-improvements)
-13. [Technical Stack](#13-technical-stack)
-14. [Getting Started](#14-getting-started)
-15. [Configurable Pipelines](#15-configurable-pipelines)
-16. [Test Suite](#16-test-suite)
-17. [Changelog](#17-changelog)
-18. [Conclusion](#18-conclusion)
+Four specialised agents collaborate in sequence to answer any research question:
+
+```
+User Query → [Planner] → [Researcher × N] → [Writer] → [Reviewer] → Final Report
+                          (parallel)                  (revision loop ≤ 3×)
+```
+
+A live React dashboard visualises every step in real time via 1.5 s polling.
 
 ---
 
-## 1. Project Overview
+## Repository Layout
 
-### The Problem
+```
+Multitask-ADA/
+├── OVERALL_README.md          ← you are here (workspace overview)
+└── multi-agent-system/
+    ├── README.md              ← full technical documentation (18 sections)
+    ├── DESIGN.md              ← 1–2 page design document (architecture, trade-offs)
+    ├── backend/               ← FastAPI + async Python pipeline
+    │   ├── .env.example       ← copy to .env and set your API key
+    │   ├── requirements.txt
+    │   ├── main.py
+    │   ├── agents/            ← Planner, Researcher, FactChecker, Writer, Reviewer
+    │   ├── orchestrator/      ← Pipeline coordination engine
+    │   ├── api/               ← REST endpoints
+    │   ├── llm/               ← Multi-provider LLM client (Gemini / OpenAI / Ollama)
+    │   ├── models/            ← Pydantic data models
+    │   ├── storage/           ← SQLite-backed task persistence
+    │   └── tests/             ← 21 pytest tests
+    └── frontend/              ← React 18 / Vite / Tailwind dashboard
+        └── src/
+            ├── components/    ← PipelineVisualizer, Timeline, ReportViewer, …
+            ├── hooks/         ← useTaskPolling
+            └── services/      ← Axios API client
+```
 
-Complex research questions cannot be answered well by a single LLM call. A monolithic prompt approach suffers from:
+---
 
-- **Shallow coverage** — the model cannot go deep on every sub-dimension of a topic within one context window.
-- **No quality control** — there is no feedback loop to catch errors, gaps, or contradictions.
+## Quick Start
+
+### Backend
+
+```bash
+cd multi-agent-system/backend
+python -m venv venv
+venv\Scripts\activate          # Windows
+# source venv/bin/activate     # macOS / Linux
+pip install -r requirements.txt
+cp .env.example .env           # then set GEMINI_API_KEY (or other provider)
+uvicorn main:app --reload --port 8001
+```
+
+### Frontend
+
+```bash
+cd multi-agent-system/frontend
+npm install
+npm run dev                    # opens http://localhost:5173
+```
+
+### No API key? Run in stub mode
+
+```env
+# .env
+USE_LLM=false
+```
+
+The pipeline runs with hardcoded fallback responses — no API key required.
+
+---
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/run` or `/tasks` | Submit a query, start the pipeline |
+| `GET`  | `/task/{id}` or `/tasks/{id}` | Poll task status and results |
+| `GET`  | `/tasks` | List all previous tasks |
+| `GET`  | `/task/{id}/timeline` | Chronological step-by-step execution log |
+| `GET`  | `/task/{id}/pipeline` | Per-agent aggregate performance stats |
+| `GET`  | `/health` | Health check |
+
+**Example:**
+
+```bash
+# Submit a task
+curl -X POST http://localhost:8001/run \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Compare microservices vs monoliths"}'
+
+# Poll for results (replace <id> with the returned task id)
+curl http://localhost:8001/task/<id>
+```
+
+---
+
+## Documentation
+
+- **[Full README](multi-agent-system/README.md)** — in-depth technical documentation covering architecture, each agent, the orchestrator, parallel execution, data models, frontend, all API endpoints, and the complete test suite.
+- **[Design Document](multi-agent-system/DESIGN.md)** — concise 1–2 page design doc covering architecture, agent reasoning, orchestrator design, data flow, trade-offs (polling vs WebSockets, sync vs async, framework choices), assumptions, and future improvements.
+
+---
+
+## Bonus Features Implemented
+
+- ✅ Error handling and fallbacks for every agent
+- ✅ Retry logic (exponential backoff: 3 s → 6 s → 12 s)
+- ✅ Parallel researcher tasks (`asyncio.gather`)
+- ✅ Configurable pipeline (custom agent order via request body)
+- ✅ Persistent task storage (SQLite via SQLModel)
+- ✅ 42 automated tests (21 backend pytest + 21 frontend Vitest)
+- ✅ Real-time UI updates (1.5 s polling)
+- ✅ Optional Fact Checker agent stage
+
 - **Zero observability** — you cannot tell _which part_ of the reasoning was slow or wrong.
 - **Poor scalability** — sequential calls stack latency linearly.
 
@@ -296,47 +382,6 @@ Max 150 words. No extra commentary.
 | **150 word cap** | Keeps reports concise; avoids token bloat that inflates cost and latency |
 | **`max_tokens=500`** | Writer gets more budget than planner/reviewer due to content generation demands |
 | **Handles both dict and string research inputs** | Makes the agent resilient if a researcher returns a raw string fallback |
-
----
-
-### 3.5 Fact Checker Agent
-
-**File:** `backend/agents/fact_checker_agent.py`
-
-The Fact Checker is an **optional pipeline stage** inserted between the Researcher and Writer. It receives all raw research outputs and re-validates each item against the LLM before passing the cleaned data to the Writer.
-
-#### How It Works
-
-```
-Input:  List of research dicts from all Researcher agents
-
-Prompt: Fact-check these claims about "<topic>".
-        Correct any inaccuracies and return the same JSON format:
-        {"topic": "<topic>", "facts": ["verified1", "verified2", "verified3"]}
-
-Output: Same JSON structure with verified / corrected facts
-```
-
-#### When to Use It
-
-Add `"factchecker"` to your pipeline config between `researcher` and `writer`:
-
-```json
-POST /run
-{
-  "query": "Climate change solutions",
-  "pipeline": { "agents": ["planner", "researcher", "factchecker", "writer", "reviewer"] }
-}
-```
-
-#### Key Engineering Decisions
-
-| Decision | Rationale |
-|---|---|
-| **Optional stage** | Cost vs. accuracy trade-off; add only when factual precision matters |
-| **Same JSON contract** | Output is identical to Researcher output, so Writer needs zero changes |
-| **Per-topic calls** | Each research item is fact-checked individually for focused, accurate prompts |
-| **Fallback pass-through** | On LLM failure, original research is passed unchanged — pipeline never stalls |
 
 ---
 
@@ -849,22 +894,16 @@ The `Task` object is the **single source of truth** for a pipeline run. It is:
 
 ### Task Store
 
-**File:** `backend/storage/task_store.py` · `backend/storage/database.py`
-
-Tasks are persisted in a **SQLite database** via [SQLModel](https://sqlmodel.tiangolo.com/). The public interface is two functions — the storage backend is transparent to all callers:
+**File:** `backend/storage/task_store.py`
 
 ```python
-def save_task(task: Task) -> None: ...   # INSERT or UPDATE
-def get_task(task_id: str) -> Optional[Task]: ...
-def get_all_tasks() -> List[Task]: ...   # Newest first
+tasks = {}
+
+def save_task(task): tasks[task.id] = task
+def get_task(task_id): return tasks.get(task_id)
 ```
 
-`database.py` defines the SQLite engine and `TaskRow` table (which serialises `steps`, `metrics`, `pipeline`, and `result` as JSON columns). The `conftest.py` test fixture swaps the engine for an in-memory SQLite database per test so tests are hermetic and leave no files on disk.
-
-Benefits over the original in-memory dict:
-- **Survives within a server session** — tasks persist across requests as long as the process is running
-- **Task history API** — `GET /tasks` returns all completed tasks, enabling the frontend Recent Tasks panel
-- **Zero-intrusion swap** — only `storage/` changed; orchestrator and API code are untouched
+The current implementation uses a **Python in-memory dict**. This is intentionally simple for the initial version — the abstraction (two functions, clear interface) makes it trivially replaceable with Redis, PostgreSQL, or any other persistence layer without touching the orchestrator or API layer.
 
 ### Why Structured Models Matter in Agentic Systems
 
@@ -1020,12 +1059,12 @@ No layer crosses into another's domain.
 
 ### 3. Modular Agent Design
 
-Agents are registered in `agents/registry.py`. Adding a new agent requires:
-1. Create a file in `agents/` extending the `Agent` ABC
-2. Add it to `AGENT_REGISTRY` in `registry.py`
-3. Add a dispatch case in `orchestrator._execute_stage()`
+Adding a new agent (e.g. a `FactCheckerAgent`) requires:
+1. Create a file in `agents/`
+2. Extend `Agent` ABC
+3. Add one call site in `orchestrator.py`
 
-The `FactCheckerAgent` was added using exactly this pattern — zero changes to existing agent files.
+No other code changes needed.
 
 ### 4. Async-First Architecture
 
@@ -1179,9 +1218,9 @@ Give researcher agents access to a vector database (e.g. Pinecone, Chroma) to re
 - Enable retrieval-augmented generation (RAG) workflows
 - Allow the system to build a growing knowledge base
 
-### 4. ~~Persistent Task Storage~~ ✅ Done
+### 4. Persistent Task Storage
 
-~~Replace the in-memory `task_store.py` with a proper persistence layer.~~ Implemented with SQLite via SQLModel. Tasks now survive within a server session and power the Recent Tasks history panel. Next step: Redis / PostgreSQL for multi-instance deployments that survive restarts.
+Replace the in-memory `task_store.py` with a proper persistence layer (Redis for hot tasks, PostgreSQL for archived tasks). This would survive server restarts and enable multi-instance deployments.
 
 ### 5. User-Configurable Pipelines
 
@@ -1219,8 +1258,6 @@ Track report quality metrics over time: citation accuracy, completeness score, r
 | **httpx** | latest | Async HTTP client (shared LLM connection) |
 | **python-dotenv** | latest | Environment variable management |
 | **google-genai** | latest | Google Gemini SDK |
-| **SQLModel** | latest | SQLite ORM for task persistence |
-| **pytest + pytest-asyncio** | latest | Backend test suite (21 tests) |
 
 ### Frontend
 
@@ -1232,7 +1269,6 @@ Track report quality metrics over time: citation accuracy, completeness score, r
 | **Axios** | 1.6 | HTTP client |
 | **react-markdown** | 10 | Markdown report rendering |
 | **@tailwindcss/typography** | 0.5 | Prose styling for rendered Markdown |
-| **Vitest + Testing Library** | latest | Frontend component test suite (21 tests) |
 
 ### LLM Providers (configurable)
 
@@ -1240,9 +1276,7 @@ Track report quality metrics over time: citation accuracy, completeness score, r
 |---|---|---|
 | **Google Gemini** | `gemini-2.5-flash` (default) | Cloud API |
 | **OpenAI** | `gpt-4o-mini` (configurable) | Cloud API |
-| **Ollama** | `llama3:8b` / `tinyllama` (configurable) | Local self-hosted |
-
-> **Ollama note:** When using a local Ollama model, the researcher agent automatically serialises its LLM calls (semaphore = 1) to avoid flooding a single-threaded inference server. A 120 s per-call timeout with graceful fallback prevents the pipeline from hanging.
+| **Ollama** | `llama3:8b` (configurable) | Local self-hosted |
 
 ---
 
@@ -1327,28 +1361,20 @@ multi-agent-system/
 │   ├── agents/
 │   │   ├── base_agent.py          # Abstract Agent ABC
 │   │   ├── planner_agent.py       # Task decomposition
-│   │   ├── researcher_agent.py    # Parallel fact collection (Ollama-safe semaphore)
-│   │   ├── fact_checker_agent.py  # Optional fact verification stage
+│   │   ├── researcher_agent.py    # Parallel fact collection
 │   │   ├── writer_agent.py        # Report synthesis
-│   │   ├── reviewer_agent.py      # Quality gate
-│   │   └── registry.py            # AGENT_REGISTRY + build_pipeline()
+│   │   └── reviewer_agent.py      # Quality gate
 │   ├── orchestrator/
 │   │   └── orchestrator.py        # Pipeline coordination engine
 │   ├── models/
 │   │   ├── task.py                # Task + Step Pydantic models
-│   │   ├── agent_result.py        # AgentResult model
-│   │   └── pipeline.py            # PipelineConfig + DEFAULT_PIPELINE
+│   │   └── agent_result.py        # AgentResult model
 │   ├── api/
-│   │   └── routes.py              # REST endpoints (incl. /tasks history)
+│   │   └── routes.py              # REST endpoints
 │   ├── llm/
 │   │   └── llm_client.py          # Multi-provider LLM client
-│   ├── storage/
-│   │   ├── database.py            # SQLite engine + TaskRow table
-│   │   └── task_store.py          # SQLite-backed task persistence
-│   └── tests/
-│       ├── conftest.py            # In-memory DB + deterministic LLM mock
-│       ├── test_pipeline.py       # PipelineConfig + registry tests (11 tests)
-│       └── test_orchestrator.py   # End-to-end orchestrator tests (10 tests)
+│   └── storage/
+│       └── task_store.py          # In-memory task store
 └── frontend/
     ├── index.html
     ├── vite.config.js
@@ -1374,122 +1400,7 @@ multi-agent-system/
 
 ---
 
-## 15. Configurable Pipelines
-
-### Agent Registry
-
-**File:** `backend/agents/registry.py`
-
-All agents are registered in a central dictionary. `build_pipeline()` instantiates agents on demand in any order:
-
-```python
-AGENT_REGISTRY = {
-    "planner":     PlannerAgent,
-    "researcher":  ResearcherAgent,
-    "factchecker": FactCheckerAgent,
-    "writer":      WriterAgent,
-    "reviewer":    ReviewerAgent,
-}
-
-def build_pipeline(agent_names: List[str]) -> List[Agent]:
-    unknown = [n for n in agent_names if n not in AGENT_REGISTRY]
-    if unknown:
-        raise ValueError(f"Unknown agent(s): {unknown}")
-    return [AGENT_REGISTRY[name]() for name in agent_names]
-```
-
-### PipelineConfig
-
-**File:** `backend/models/pipeline.py`
-
-```python
-class PipelineConfig(BaseModel):
-    agents: List[str] = ["planner", "researcher", "writer", "reviewer"]
-```
-
-The default pipeline runs if no `pipeline` field is sent. A custom pipeline is specified in the request body:
-
-```json
-POST /run
-{
-  "query": "Explain CRISPR",
-  "pipeline": {
-    "agents": ["planner", "researcher", "factchecker", "writer", "reviewer"]
-  }
-}
-```
-
-### Pipeline Execution Rules
-
-| Stage present | Behaviour |
-|---|---|
-| `planner` | Decomposes query into subtasks; subtasks fed to next stage |
-| `researcher` | Runs one LLM call per subtask via `asyncio.gather()` |
-| `factchecker` | Verifies each research item; must come after `researcher` |
-| `writer` | Synthesises all research into a Markdown report |
-| `reviewer` | Enters the revision loop (≤ 3 cycles); requires a `writer` earlier in the pipeline |
-
-Any unknown agent name raises a `ValueError` at pipeline-build time (fast-fail before any LLM calls).
-
----
-
-## 16. Test Suite
-
-The project has **42 automated tests** — 21 backend (pytest) and 21 frontend (Vitest) — all passing.
-
-### Backend Tests
-
-```
-bash
-cd multi-agent-system/backend
-pytest tests/ -v
-```
-
-| File | Tests | What is covered |
-|---|---|---|
-| `test_pipeline.py` | 11 | `PipelineConfig` model, `AGENT_REGISTRY`, `build_pipeline()` |
-| `test_orchestrator.py` | 10 | Full pipeline runs, status transitions, persistence, metrics |
-
-**Key fixtures in `conftest.py`:**
-- `in_memory_db` (autouse) — replaces the SQLite engine with `:memory:` per test; hermetic, no files on disk
-- `mock_generate` — patches `generate` in every agent module (where it is bound by `from ... import`), returns deterministic responses and increments `_metrics["llm_calls"]` so metrics tests pass
-
-### Frontend Tests
-
-```bash
-cd multi-agent-system/frontend
-npm test
-```
-
-| File | Tests | What is covered |
-|---|---|---|
-| `StatusBadge.test.jsx` | 7 | All status colours, underscore→space display, pulsing dot |
-| `Timeline.test.jsx` | 7 | Shimmer loading state, duration formatting, expand/collapse |
-| `PipelineVisualizer.test.jsx` | 7 | Default/custom pipelines, checkmarks, unknown agents |
-
----
-
-## 17. Changelog
-
-### March 2026
-
-#### Bug Fixes
-- **`storage/task_store.py`** — Removed a duplicate `get_task` stub at the end of the file that overrode the correct SQLite implementation with `NameError: name 'tasks' is not defined`. This caused all orchestrator tests to fail and broke `GET /task/{id}` at runtime.
-- **`tests/conftest.py`** — Fixed `mock_generate` fixture: agents use `from llm.llm_client import generate` (local binding), so patching `llm.llm_client.generate` had no effect. Changed to patch the name in each agent module directly.
-- **`agents/researcher_agent.py`** — Fixed pipeline hanging with local Ollama: changed semaphore from `3 → 1` when `LLM_PROVIDER=ollama`. Ollama processes one request at a time; flooding it with 3 concurrent calls caused silent internal queuing that made the system appear stuck. Added a 120 s per-call `asyncio.wait_for` timeout with fallback.
-
-#### New Features
-- **`agents/fact_checker_agent.py`** — New optional FactChecker agent that validates research outputs before the Writer stage.
-- **`agents/registry.py`** — Centralised `AGENT_REGISTRY` dict and `build_pipeline()` factory; enables runtime-configurable pipelines without touching orchestrator logic.
-- **`models/pipeline.py`** — `PipelineConfig` Pydantic model + `DEFAULT_PIPELINE` constant; `POST /run` now accepts an optional `pipeline` body field.
-- **`storage/database.py`** — SQLite engine and `TaskRow` SQLModel table replacing the original in-memory Python dict.
-- **`api/routes.py`** — Added `GET /tasks` (all tasks, newest first) powering the frontend Recent Tasks history panel.
-- **Frontend Recent Tasks** — Hero screen shows the last 5 completed tasks. Clicking one reopens its full report, timeline, and metrics.
-- **Full test suite** — 21 backend pytest tests + 21 frontend Vitest tests, all green.
-
----
-
-## 18. Conclusion
+## 15. Conclusion
 
 Agentic architectures represent a fundamental shift in how we design AI systems. Rather than asking a single model to do everything, we decompose complex tasks into **specialised, composable agents** that each do one thing extraordinarily well.
 

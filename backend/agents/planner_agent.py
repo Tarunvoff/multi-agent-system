@@ -1,9 +1,12 @@
 import json
+import logging
 
 from agents.base_agent import Agent
 from models.agent_result import AgentResult
 from config import USE_LLM
 from llm.llm_client import generate
+
+log = logging.getLogger(__name__)
 
 _FALLBACK_SUBTASKS = [
     "definition of microservices",
@@ -37,5 +40,5 @@ class PlannerAgent(Agent):
             return AgentResult(status="success", output=subtasks[:3])
 
         except Exception as e:
-            print(f"[PlannerAgent] LLM error: {e}")
+            log.warning("LLM error: %s", e)
             return AgentResult(status="success", output=_FALLBACK_SUBTASKS)

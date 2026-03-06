@@ -7,18 +7,33 @@ const api = axios.create({
 })
 
 /**
- * Submit a new task query.
- * POST /run  { query }
- * Returns the initial Task object immediately (status: "planning").
- * The pipeline runs in the background — poll GET /task/{id} for live updates.
+ * Submit a new task query with an optional custom pipeline.
+ *
+ * @param {string}   query       - The research question.
+ * @param {string[]} [agentNames] - Ordered list of agent names, e.g.
+ *                                  ['planner','researcher','factchecker','writer'].
+ *                                  Omit to use the server-side default pipeline.
  */
-export async function submitTask(query) {
-  const { data } = await api.post('/run', { query })
+export async function submitTask(query, agentNames = null) {
+  const body = { query }
+  if (agentNames && agentNames.length > 0) {
+    body.pipeline = { agents: agentNames }
+  }
+  const { data } = await api.post('/run', body)
   return data
 }
 
 /**
- * Fetch a task by ID.
+ * Fetch all tasks, newest first.
+ * GET /tasks
+ */
+export async function fetchTasks() {
+  const { data } = await api.get('/tasks')
+  return data
+}
+
+/**
+ * Fetch a single task by ID.
  * GET /task/{taskId}
  */
 export async function fetchTask(taskId) {

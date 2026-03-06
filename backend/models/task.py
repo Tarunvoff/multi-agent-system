@@ -16,6 +16,7 @@ class Task(BaseModel):
     id: str
     query: str
     status: str
+    pipeline: Optional[List[str]] = None   # agent names used for this run
     steps: List[Step] = []
     result: Optional[Any] = None
     start_time: Optional[datetime] = None

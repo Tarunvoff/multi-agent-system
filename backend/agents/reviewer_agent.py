@@ -1,9 +1,12 @@
+import logging
 import random
 
 from agents.base_agent import Agent
 from models.agent_result import AgentResult
 from config import USE_LLM
 from llm.llm_client import generate
+
+log = logging.getLogger(__name__)
 
 
 class ReviewerAgent(Agent):
@@ -41,5 +44,5 @@ class ReviewerAgent(Agent):
             return AgentResult(status="approved", output="APPROVED")
 
         except Exception as e:
-            print(f"[ReviewerAgent] LLM error: {e}")
+            log.warning("LLM error: %s", e)
             return AgentResult(status="approved", output="APPROVED")

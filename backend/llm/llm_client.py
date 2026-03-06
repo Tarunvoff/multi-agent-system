@@ -1,8 +1,11 @@
 import asyncio
+import logging
 import httpx
 from google import genai as _genai
 
 import config
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Lightweight metrics — global counters snapshotted per-task by orchestrator
@@ -46,10 +49,10 @@ async def generate(prompt: str, max_tokens: int = 600) -> str:
                 _metrics["retries"] += 1
                 delay = _RETRY_DELAYS[attempt]
                 label = "Rate limited (429)" if is_rate_limit else f"Error: {str(exc)[:80]}"
-                print(f"[LLMClient] {label}. Retrying in {delay}s ({attempt + 1}/{_MAX_RETRIES})")
+                log.warning("%s. Retrying in %ds (%d/%d)", label, delay, attempt + 1, _MAX_RETRIES)
                 await asyncio.sleep(delay)
             else:
-                print(f"[LLMClient] All {_MAX_RETRIES} attempts failed. Last: {str(exc)[:80]}")
+                log.error("All %d attempts failed. Last: %s", _MAX_RETRIES, str(exc)[:80])
 
     raise last_exc
 

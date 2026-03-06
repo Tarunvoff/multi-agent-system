@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import TaskInput from '../components/TaskInput.jsx'
 import PipelineVisualizer from '../components/PipelineVisualizer.jsx'
 import Timeline from '../components/Timeline.jsx'
@@ -6,6 +6,7 @@ import ReportViewer from '../components/ReportViewer.jsx'
 import StatusBadge from '../components/StatusBadge.jsx'
 import MetricsCard from '../components/MetricsCard.jsx'
 import { useTaskPolling } from '../hooks/useTaskPolling.js'
+import { fetchTasks } from '../services/api.js'
 
 const EXAMPLE_QUERIES = [
   'Compare microservices vs monoliths',
@@ -25,8 +26,21 @@ export default function Dashboard() {
   const [taskId, setTaskId]                 = useState(null)
   const [immediateTask, setImmediateTask]   = useState(null)
   const [suggestedQuery, setSuggestedQuery] = useState('')
+  const [history, setHistory]               = useState([])
   const { task: polledTask, error }         = useTaskPolling(taskId)
   const task = polledTask || immediateTask
+
+  // Load task history on initial mount
+  useEffect(() => {
+    fetchTasks().then(setHistory).catch(console.error)
+  }, [])
+
+  // Re-fetch history whenever returning to the hero screen
+  useEffect(() => {
+    if (!task) {
+      fetchTasks().then(setHistory).catch(console.error)
+    }
+  }, [task])
 
   const handleTaskStarted = (taskData) => {
     setImmediateTask(taskData)
@@ -37,6 +51,11 @@ export default function Dashboard() {
     setTaskId(null)
     setImmediateTask(null)
     setSuggestedQuery('')
+  }
+
+  const handleRevisit = (t) => {
+    setImmediateTask(t)
+    setTaskId(t.id)
   }
 
   /* ── HERO (no active task) ─────────────────────────────────── */
@@ -113,6 +132,29 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
+
+          {/* Recent tasks */}
+          {history.length > 0 && (
+            <div className="mt-12 w-full max-w-2xl animate-fade-in" style={{ animationDelay: '450ms' }}>
+              <p className="text-xs text-white/25 mb-3 text-left">Recent tasks</p>
+              <div className="space-y-2">
+                {history.slice(0, 5).map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => handleRevisit(t)}
+                    className="w-full flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl
+                               bg-white/5 border border-white/8 hover:bg-white/10 hover:border-white/15
+                               transition-all text-left group"
+                  >
+                    <span className="text-xs text-white/55 truncate flex-1 group-hover:text-white/75">
+                      {t.query}
+                    </span>
+                    <StatusBadge status={t.status} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     )
@@ -175,7 +217,7 @@ export default function Dashboard() {
       <main className="max-w-7xl mx-auto px-5 py-6 space-y-5 animate-fade-in">
 
         {/* Pipeline */}
-        <PipelineVisualizer status={task.status} />
+        <PipelineVisualizer status={task.status} pipeline={task.pipeline} />
 
         {/* Timeline (2/5) + Report (3/5) */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
