@@ -22,6 +22,10 @@ export function useTaskPolling(taskId) {
         const data = await fetchTask(taskId)
         setTask(data)
         if (data.status === 'completed' || data.status === 'error') {
+          clearInterval(intervalRef.current)
+        }
+      } catch (err) {
+        setError(err)
         clearInterval(intervalRef.current)
       }
     }
